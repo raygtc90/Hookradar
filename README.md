@@ -2,9 +2,9 @@
 
 ### Open Source Webhook Tester & Debugger
 
-> **Webhook ka spy camera jo developer ki zindagi aasaan kare!**
+> **A spy camera for your webhooks that makes a developer's life easier!**
 >
-> HookRadar ek free open source tool hai jo developers ko webhooks real-time mein test, debug aur analyze karne mein help karta hai — bina koi server setup kiye!
+> HookRadar is a free, open-source tool that helps developers test, debug, and analyze webhooks in real-time — without any server setup!
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
@@ -23,11 +23,11 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 
 ### The Pizza Analogy 🍕
 
-> Zomato pe pizza order kiya → Payment Razorpay se ki → Razorpay ne server ko message bheja "Payment successful!" → **Yahi Webhook hai!**
+> You ordered a pizza on Zomato → Paid via Razorpay → Razorpay sends a message to your server: "Payment successful!" → **That's a Webhook!**
 >
-> Problem: Razorpay internet pe hai, aapka laptop localhost pe. Razorpay localhost tak pahunch hi nahi sakta!
+> Problem: Razorpay is on the internet, but your laptop is on localhost. Razorpay simply can't reach localhost!
 >
-> **HookRadar Solution:** Ek public URL deta hai → Razorpay is URL pe request bhejta hai → Aap real-time mein poora data dekh sakte ho!
+> **HookRadar Solution:** It gives you a public URL → Razorpay sends the request to this URL → You can see all the data in real-time!
 
 ---
 
@@ -62,7 +62,7 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | **Request Replay** | Paid | ❌ | ✅ | ✅ |
 | **Docker** | ❌ | ❌ | ❌ | ✅ |
 
-> **Postman vs HookRadar:** Postman = Aap khud request bhejte ho (You → API). HookRadar = Doosra server request bhejta hai aapko (Razorpay/GitHub → You). Dono complementary tools hain!
+> **Postman vs HookRadar:** Postman = You send requests yourself (You → API). HookRadar = Another server sends requests to you (Razorpay/GitHub → You). Both are complementary tools!
 
 ---
 
@@ -89,7 +89,7 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/hookradar.git
+git clone https://github.com/aniketmishra-0/hookradar.git
 cd hookradar
 
 # Install dependencies

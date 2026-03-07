@@ -9,7 +9,7 @@ You don't need to be a coding expert to contribute! Here are all the ways you ca
 | Type | Language/Skill Needed | Difficulty |
 |------|----------------------|------------|
 | 🐛 Bug Fix / Feature | JavaScript/Node.js | Medium |
-| 📝 Documentation | English/Hindi | Easy |
+| 📝 Documentation | English | Easy |
 | 🎨 UI Design | CSS/Figma | Easy-Medium |
 | 🧪 Testing | Basic JS knowledge | Easy |
 | 🐞 Issue Reporting | None | Very Easy |
@@ -155,7 +155,7 @@ Examples of good first contributions:
 
 - 💬 Open a Discussion on GitHub
 - 🐛 Create an Issue for bugs
-- 📧 Email: [your-email@example.com]
+- 📧 Email: [aniketmishra492@gmail.com]
 
 ---
 

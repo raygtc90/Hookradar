@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
     Copy, Check, Trash2, Settings, Radio, Clock, Hash,
-    Search, Inbox, ArrowRight, RefreshCw, ExternalLink, Brain
+    Search, Inbox, ArrowRight, RefreshCw, ExternalLink, Brain,
+    Filter, X, ChevronDown, SlidersHorizontal
 } from 'lucide-react';
 import RequestDetail from './RequestDetail';
 import ResponseConfig from './ResponseConfig';
@@ -19,28 +20,66 @@ export default function EndpointView({ endpoint, onUpdate, onDelete, newRequestT
     const [showAI, setShowAI] = useState(false);
     const [loading, setLoading] = useState(true);
 
+    // Advanced Filters
+    const [showFilters, setShowFilters] = useState(false);
+    const [filters, setFilters] = useState({
+        method: '',
+        status: '',
+        content_type: '',
+        date_from: '',
+        date_to: '',
+    });
+    const [activeFilterCount, setActiveFilterCount] = useState(0);
+
     const webhookUrl = getWebhookUrl(endpoint.slug);
 
-    // Load requests
+    // Count active filters
+    useEffect(() => {
+        const count = Object.values(filters).filter(v => v !== '').length;
+        setActiveFilterCount(count);
+    }, [filters]);
+
+    // Load requests with filters
     const loadRequests = useCallback(async () => {
         try {
-            const res = await api.getRequests(endpoint.id);
-            setRequests(res.data);
-            setTotalRequests(res.total);
+            const queryParams = new URLSearchParams();
+            queryParams.set('limit', '50');
+            queryParams.set('offset', '0');
+
+            if (filters.method) queryParams.set('method', filters.method);
+            if (filters.status) queryParams.set('status', filters.status);
+            if (filters.content_type) queryParams.set('content_type', filters.content_type);
+            if (filters.date_from) queryParams.set('date_from', filters.date_from);
+            if (filters.date_to) queryParams.set('date_to', filters.date_to);
+            if (searchQuery) queryParams.set('search', searchQuery);
+
+            const res = await fetch(`/api/endpoints/${endpoint.id}/requests?${queryParams.toString()}`);
+            const data = await res.json();
+            if (data.success) {
+                setRequests(data.data);
+                setTotalRequests(data.total);
+            }
         } catch (err) {
             console.error('Failed to load requests:', err);
         } finally {
             setLoading(false);
         }
-    }, [endpoint.id]);
+    }, [endpoint.id, filters, searchQuery]);
 
     useEffect(() => {
         setLoading(true);
         setSelectedRequest(null);
         setShowConfig(false);
         setShowAI(false);
+        setFilters({ method: '', status: '', content_type: '', date_from: '', date_to: '' });
+        setSearchQuery('');
         loadRequests();
-    }, [endpoint.id, loadRequests]);
+    }, [endpoint.id]);
+
+    // Reload on filter/search change
+    useEffect(() => {
+        loadRequests();
+    }, [filters, searchQuery, loadRequests]);
 
     // Reload when new request comes in
     useEffect(() => {
@@ -87,14 +126,11 @@ export default function EndpointView({ endpoint, onUpdate, onDelete, newRequestT
         }
     };
 
-    // Filter requests
-    const filteredRequests = requests.filter(r => {
-        if (!searchQuery) return true;
-        const q = searchQuery.toLowerCase();
-        return r.method.toLowerCase().includes(q) ||
-            r.path.toLowerCase().includes(q) ||
-            r.body?.toLowerCase().includes(q);
-    });
+    // Clear all filters
+    const clearFilters = () => {
+        setFilters({ method: '', status: '', content_type: '', date_from: '', date_to: '' });
+        setSearchQuery('');
+    };
 
     if (showConfig) {
         return (
@@ -156,13 +192,19 @@ export default function EndpointView({ endpoint, onUpdate, onDelete, newRequestT
                         <Activity className="icon" />
                         {totalRequests} requests
                     </div>
+                    {endpoint.forwarding_url && (
+                        <div className="endpoint-meta-item forwarding-active">
+                            <ExternalLink className="icon" size={12} />
+                            Forwarding
+                        </div>
+                    )}
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
                         <button
                             className={`btn btn-sm ${showAI ? 'btn-ai-active' : 'btn-ghost'}`}
                             onClick={() => setShowAI(!showAI)}
                         >
                             <Brain className="icon" size={14} />
-                            AI Analysis
+                            AI
                         </button>
                         <button className="btn btn-ghost btn-sm" onClick={() => setShowConfig(true)}>
                             <Settings className="icon" size={14} />
@@ -191,20 +233,138 @@ export default function EndpointView({ endpoint, onUpdate, onDelete, newRequestT
                                 <span className="request-list-count">{totalRequests}</span>
                             )}
                         </div>
-                        <div className="live-indicator">
-                            <div className="live-dot" />
-                            Live
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <button
+                                className={`btn-filter-toggle ${showFilters ? 'active' : ''} ${activeFilterCount > 0 ? 'has-filters' : ''}`}
+                                onClick={() => setShowFilters(!showFilters)}
+                                title="Advanced filters"
+                            >
+                                <SlidersHorizontal size={14} />
+                                {activeFilterCount > 0 && (
+                                    <span className="filter-badge">{activeFilterCount}</span>
+                                )}
+                            </button>
+                            <div className="live-indicator">
+                                <div className="live-dot" />
+                                Live
+                            </div>
                         </div>
                     </div>
 
+                    {/* Search Bar */}
                     <div className="request-list-search">
-                        <input
-                            type="text"
-                            placeholder="Search by method, path, body..."
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                        />
+                        <div className="search-input-wrapper">
+                            <Search size={14} className="search-icon" />
+                            <input
+                                type="text"
+                                placeholder="Search method, path, body..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                            />
+                            {searchQuery && (
+                                <button className="search-clear" onClick={() => setSearchQuery('')}>
+                                    <X size={12} />
+                                </button>
+                            )}
+                        </div>
                     </div>
+
+                    {/* Advanced Filters Panel */}
+                    {showFilters && (
+                        <div className="filter-panel">
+                            <div className="filter-row">
+                                <div className="filter-group">
+                                    <label>Method</label>
+                                    <select
+                                        value={filters.method}
+                                        onChange={e => setFilters(f => ({ ...f, method: e.target.value }))}
+                                    >
+                                        <option value="">All Methods</option>
+                                        <option value="GET">GET</option>
+                                        <option value="POST">POST</option>
+                                        <option value="PUT">PUT</option>
+                                        <option value="PATCH">PATCH</option>
+                                        <option value="DELETE">DELETE</option>
+                                        <option value="HEAD">HEAD</option>
+                                        <option value="OPTIONS">OPTIONS</option>
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label>Status</label>
+                                    <select
+                                        value={filters.status}
+                                        onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}
+                                    >
+                                        <option value="">All Status</option>
+                                        <option value="200">2xx Success</option>
+                                        <option value="300">3xx Redirect</option>
+                                        <option value="400">4xx Client Error</option>
+                                        <option value="500">5xx Server Error</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="filter-row">
+                                <div className="filter-group">
+                                    <label>Content-Type</label>
+                                    <select
+                                        value={filters.content_type}
+                                        onChange={e => setFilters(f => ({ ...f, content_type: e.target.value }))}
+                                    >
+                                        <option value="">All Types</option>
+                                        <option value="json">application/json</option>
+                                        <option value="xml">application/xml</option>
+                                        <option value="form">form-urlencoded</option>
+                                        <option value="multipart">multipart/form-data</option>
+                                        <option value="text">text/plain</option>
+                                    </select>
+                                </div>
+                                <div className="filter-group">
+                                    <label>From</label>
+                                    <input
+                                        type="date"
+                                        value={filters.date_from}
+                                        onChange={e => setFilters(f => ({ ...f, date_from: e.target.value }))}
+                                    />
+                                </div>
+                            </div>
+                            {activeFilterCount > 0 && (
+                                <button className="filter-clear-btn" onClick={clearFilters}>
+                                    <X size={12} />
+                                    Clear all filters
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Active filter chips */}
+                    {activeFilterCount > 0 && !showFilters && (
+                        <div className="filter-chips">
+                            {filters.method && (
+                                <span className="filter-chip">
+                                    {filters.method}
+                                    <button onClick={() => setFilters(f => ({ ...f, method: '' }))}><X size={10} /></button>
+                                </span>
+                            )}
+                            {filters.status && (
+                                <span className="filter-chip">
+                                    {filters.status}xx
+                                    <button onClick={() => setFilters(f => ({ ...f, status: '' }))}><X size={10} /></button>
+                                </span>
+                            )}
+                            {filters.content_type && (
+                                <span className="filter-chip">
+                                    {filters.content_type}
+                                    <button onClick={() => setFilters(f => ({ ...f, content_type: '' }))}><X size={10} /></button>
+                                </span>
+                            )}
+                            {filters.date_from && (
+                                <span className="filter-chip">
+                                    From: {filters.date_from}
+                                    <button onClick={() => setFilters(f => ({ ...f, date_from: '' }))}><X size={10} /></button>
+                                </span>
+                            )}
+                        </div>
+                    )}
 
                     <div className="request-list-items">
                         {loading ? (
@@ -212,19 +372,24 @@ export default function EndpointView({ endpoint, onUpdate, onDelete, newRequestT
                                 <RefreshCw className="icon animate-spin" size={24} />
                                 <p>Loading requests...</p>
                             </div>
-                        ) : filteredRequests.length === 0 ? (
+                        ) : requests.length === 0 ? (
                             <div className="empty-state" style={{ padding: '32px' }}>
                                 <Inbox className="icon" size={36} />
-                                <h3>{searchQuery ? 'No matching requests' : 'No requests yet'}</h3>
+                                <h3>{activeFilterCount > 0 || searchQuery ? 'No matching requests' : 'No requests yet'}</h3>
                                 <p>
-                                    {searchQuery
-                                        ? 'Try a different search query'
+                                    {activeFilterCount > 0 || searchQuery
+                                        ? 'Try adjusting your filters or search query'
                                         : 'Send a webhook to your URL to see it appear here in real-time'
                                     }
                                 </p>
+                                {(activeFilterCount > 0 || searchQuery) && (
+                                    <button className="btn btn-secondary btn-sm" style={{ marginTop: '12px' }} onClick={clearFilters}>
+                                        Clear filters
+                                    </button>
+                                )}
                             </div>
                         ) : (
-                            filteredRequests.map((req, index) => (
+                            requests.map((req, index) => (
                                 <div
                                     key={req.id}
                                     className={`request-item ${selectedRequest?.id === req.id ? 'active' : ''} ${index === 0 ? 'new-request' : ''}`}

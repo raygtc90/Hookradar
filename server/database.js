@@ -22,6 +22,7 @@ db.exec(`
     response_body TEXT DEFAULT '{"success": true, "message": "Webhook received by HookRadar"}',
     response_delay INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    forwarding_url TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
@@ -46,8 +47,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_requests_endpoint_id ON requests(endpoint_id);
   CREATE INDEX IF NOT EXISTS idx_requests_created_at ON requests(created_at);
+  CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
   CREATE INDEX IF NOT EXISTS idx_endpoints_slug ON endpoints(slug);
 `);
+
+// Add forwarding_url column if it doesn't exist (migration for existing DBs)
+try {
+    db.exec(`ALTER TABLE endpoints ADD COLUMN forwarding_url TEXT DEFAULT ''`);
+} catch (e) {
+    // Column already exists, ignore
+}
 
 // Prepared statements
 const stmts = {
@@ -72,7 +81,7 @@ const stmts = {
     updateEndpoint: db.prepare(`
     UPDATE endpoints 
     SET name = ?, description = ?, response_status = ?, response_headers = ?, 
-        response_body = ?, response_delay = ?, is_active = ?, updated_at = datetime('now')
+        response_body = ?, response_delay = ?, is_active = ?, forwarding_url = ?, updated_at = datetime('now')
     WHERE id = ?
   `),
 

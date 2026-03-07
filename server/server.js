@@ -7,7 +7,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
 import { v4 as uuidv4 } from 'uuid';
-import { stmts } from './database.js';
+import { db, stmts } from './database.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -142,10 +142,11 @@ app.put('/api/endpoints/:id', (req, res) => {
             response_headers = existing.response_headers,
             response_body = existing.response_body,
             response_delay = existing.response_delay,
-            is_active = existing.is_active
+            is_active = existing.is_active,
+            forwarding_url = existing.forwarding_url || ''
         } = req.body;
 
-        stmts.updateEndpoint.run(name, description, response_status, response_headers, response_body, response_delay, is_active, req.params.id);
+        stmts.updateEndpoint.run(name, description, response_status, response_headers, response_body, response_delay, is_active, forwarding_url, req.params.id);
 
         const updated = stmts.getEndpoint.get(req.params.id);
         res.json({ success: true, data: updated });
@@ -165,13 +166,64 @@ app.delete('/api/endpoints/:id', (req, res) => {
     }
 });
 
-// Get requests for an endpoint
+// Get requests for an endpoint (with advanced filtering)
 app.get('/api/endpoints/:id/requests', (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 50;
         const offset = parseInt(req.query.offset) || 0;
-        const requests = stmts.getRequestsByEndpoint.all(req.params.id, limit, offset);
-        const countResult = stmts.getRequestCount.get(req.params.id);
+        const { method, status, content_type, date_from, date_to, search } = req.query;
+
+        // Build dynamic SQL for filtering
+        let conditions = ['endpoint_id = ?'];
+        let params = [req.params.id];
+
+        if (method) {
+            conditions.push('method = ?');
+            params.push(method.toUpperCase());
+        }
+
+        if (status) {
+            const statusNum = parseInt(status);
+            if (statusNum >= 100 && statusNum < 200) {
+                conditions.push('response_status >= 100 AND response_status < 200');
+            } else if (statusNum >= 200 && statusNum < 300) {
+                conditions.push('response_status >= 200 AND response_status < 300');
+            } else if (statusNum >= 300 && statusNum < 400) {
+                conditions.push('response_status >= 300 AND response_status < 400');
+            } else if (statusNum >= 400 && statusNum < 500) {
+                conditions.push('response_status >= 400 AND response_status < 500');
+            } else if (statusNum >= 500) {
+                conditions.push('response_status >= 500');
+            }
+        }
+
+        if (content_type) {
+            conditions.push('content_type LIKE ?');
+            params.push(`%${content_type}%`);
+        }
+
+        if (date_from) {
+            conditions.push("created_at >= ?");
+            params.push(date_from);
+        }
+
+        if (date_to) {
+            conditions.push("created_at <= ?");
+            params.push(date_to);
+        }
+
+        if (search) {
+            conditions.push('(method LIKE ? OR path LIKE ? OR body LIKE ?)');
+            const searchPattern = `%${search}%`;
+            params.push(searchPattern, searchPattern, searchPattern);
+        }
+
+        const whereClause = conditions.join(' AND ');
+        const dataQuery = db.prepare(`SELECT * FROM requests WHERE ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`);
+        const countQuery = db.prepare(`SELECT COUNT(*) as count FROM requests WHERE ${whereClause}`);
+
+        const requests = dataQuery.all(...params, limit, offset);
+        const countResult = countQuery.get(...params);
 
         res.json({
             success: true,
@@ -332,6 +384,40 @@ const webhookHandler = async (req, res) => {
             endpoint_id: endpoint.id,
             request: savedRequest
         });
+
+        // Auto-forward to configured URL (fire-and-forget)
+        if (endpoint.forwarding_url) {
+            try {
+                const forwardHeaders = { ...req.headers };
+                delete forwardHeaders['host'];
+                delete forwardHeaders['content-length'];
+
+                fetch(endpoint.forwarding_url, {
+                    method: req.method,
+                    headers: forwardHeaders,
+                    body: ['GET', 'HEAD'].includes(req.method) ? undefined : body,
+                }).then(fwdRes => {
+                    console.log(`📤 Forwarded ${req.method} to ${endpoint.forwarding_url} → ${fwdRes.status}`);
+                    // Broadcast forwarding result
+                    broadcastToEndpoint(endpoint.id, {
+                        type: 'forward_result',
+                        request_id: requestId,
+                        status: fwdRes.status,
+                        url: endpoint.forwarding_url
+                    });
+                }).catch(fwdErr => {
+                    console.error(`📤 Forward failed to ${endpoint.forwarding_url}:`, fwdErr.message);
+                    broadcastToEndpoint(endpoint.id, {
+                        type: 'forward_error',
+                        request_id: requestId,
+                        error: fwdErr.message,
+                        url: endpoint.forwarding_url
+                    });
+                });
+            } catch (fwdErr) {
+                console.error('Forward setup error:', fwdErr.message);
+            }
+        }
 
         // Send configured response
         const responseHeaders = JSON.parse(endpoint.response_headers);

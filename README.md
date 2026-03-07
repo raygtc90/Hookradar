@@ -1,10 +1,8 @@
 # <img src="public/hookradar-logo.webp" width="40" style="vertical-align: middle; border-radius: 8px;" alt="HookRadar Logo" /> HookRadar
 
-### Open Source Webhook Tester & Debugger
+### Open Source Webhook Tester and Debugger
 
-> **A spy camera for your webhooks that makes a developer's life easier!**
->
-> HookRadar is a free, open-source tool that helps developers test, debug, and analyze webhooks in real-time — without any server setup!
+> Create webhook endpoints, inspect requests in real time, replay them, and run the app on your own machine or server.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
@@ -13,27 +11,28 @@
 
 **Live App:** [hookradar.up.railway.app](https://hookradar.up.railway.app)
 
----
-
-## 🤔 What is HookRadar?
-
-**For Developers:**  
-HookRadar is an open source webhook inspection tool — instant endpoints, real-time request monitoring, request replay, self-hostable. The free, open source alternative to Webhook.site!
-
-**Simple Explanation:**  
-When apps talk to each other automatically over the internet (like Razorpay telling your server "Payment successful!"), HookRadar catches those messages and shows you exactly what was sent — like a spy camera for internet messages.
-
-### The Pizza Analogy 🍕
-
-> You ordered a pizza on Zomato → Paid via Razorpay → Razorpay sends a message to your server: "Payment successful!" → **That's a Webhook!**
->
-> Problem: Razorpay is on the internet, but your laptop is on localhost. Razorpay simply can't reach localhost!
->
-> **HookRadar Solution:** It gives you a public URL → Razorpay sends the request to this URL → You can see all the data in real-time!
+**Note:** The hosted Railway app is a shared public instance. For private use, run HookRadar on your own machine or server.
 
 ---
 
-## ✨ Features
+## What Is HookRadar?
+
+HookRadar is an open source tool for receiving and inspecting webhooks.
+
+Use it to:
+
+- generate a unique webhook URL
+- inspect headers, query parameters, and payloads
+- monitor requests live over WebSocket
+- replay captured requests to another URL
+- customize response status, headers, body, and delay
+- run the app locally, on your own server, or on a hosted instance
+
+If you already use tools like Webhook.site or RequestBin, HookRadar gives you a similar workflow with self-hosting support.
+
+---
+
+## Features
 
 | Feature | Description |
 |---------|-------------|
@@ -48,14 +47,14 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | 🔎 **Advanced Filters** | Filter by method, status, content-type, date range |
 | 🤖 **AI Analysis** | Smart source detection, security audit, code generation |
 | 🖥️ **CLI Tool** | Full CLI — `hookradar create`, `hookradar listen` |
-| 🌙 **Premium Dark UI** | Beautiful, modern interface with smooth animations |
+| 🌙 **Modern UI** | Clean interface built for day-to-day debugging |
 | 💾 **Persistent Storage** | SQLite database stores all endpoints and requests |
 | 🐳 **Docker Ready** | Self-host with a single `docker compose up` |
 | 🚀 **Self-hosted** | Run on your own server, own your data |
 
 ---
 
-## 🆚 Why HookRadar?
+## Why HookRadar?
 
 | | Webhook.site | RequestBin | Hookdeck | **HookRadar** |
 |---|---|---|---|---|
@@ -71,11 +70,11 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | **CLI Tool** | ❌ | ❌ | ❌ | ✅ |
 | **Docker** | ❌ | ❌ | ❌ | ✅ |
 
-> **Postman vs HookRadar:** Postman = You send requests yourself (You → API). HookRadar = Another server sends requests to you (Razorpay/GitHub → You). Both are complementary tools!
+> **Postman vs HookRadar:** Postman is for sending requests to an API. HookRadar is for receiving and inspecting requests sent to you by another service.
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
@@ -83,12 +82,12 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | Backend | Node.js + Express | API + Webhook receiver |
 | Real-time | WebSockets (ws) | Live updates |
 | Database | SQLite (better-sqlite3) | Request storage |
-| Icons | Lucide React | Beautiful icon set |
-| Styling | Vanilla CSS | Premium dark theme |
+| Icons | Lucide React | Icon set |
+| Styling | Vanilla CSS | App styling |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Node.js 18+
@@ -111,7 +110,7 @@ cp .env.example .env
 npm run dev
 ```
 
-**That's it!** Open http://localhost:5173 🎉
+Open http://localhost:5173
 
 ### Production Mode (single process)
 
@@ -123,7 +122,7 @@ npm start
 
 Open http://localhost:3001
 
-### 🐳 Docker (Self-hosting)
+### Docker (Self-hosting)
 
 ```bash
 # Using Docker Compose (recommended)
@@ -138,38 +137,38 @@ Open http://localhost:3001
 
 ---
 
-## 🌍 Deployment Modes
+## Deployment Modes
 
-HookRadar can be used in three simple ways:
+HookRadar can be used in three ways:
 
 1. **Local development** — Run `npm run dev` on your laptop.
 2. **Self-host on your own server** — Use Docker or Node on any VPS, VM, or laptop.
 3. **Public shared instance** — Deploy once on Railway and share one public app URL.
 
-### Shared instance vs self-hosted
+### Shared Instance vs Self-Hosted
 
 - **Shared Railway instance:** everyone gets a unique `/hook/<slug>` URL under the same base domain.
-- **Self-hosted instance:** each user runs their own copy on their own laptop/server and owns their own data.
+- **Self-hosted instance:** each user runs their own copy on their own laptop or server and keeps their own data.
 
-> **Important:** The current app is best positioned as an open-source self-hosted tool. If you deploy one public Railway instance today, all users share the same app and database until auth and multi-user isolation are added.
+> **Important:** A public Railway deployment is a shared instance. Users will share the same app and database until authentication and per-user isolation are added.
 
 ---
 
-## 🚂 Deploy on Railway
+## Deploy on Railway
 
-Railway is the easiest way to give HookRadar a public URL without keeping your laptop on.
+Railway is the simplest way to make HookRadar available on a public URL without keeping your laptop online.
 
-### What Railway deployment looks like
+### What a Railway Deployment Looks Like
 
 - Base app URL: `https://your-app-name.up.railway.app`
 - Webhook URL per endpoint: `https://your-app-name.up.railway.app/hook/<slug>`
 - Every user gets a different slug, but the same shared app domain
 
-### Current public instance
+### Current Public Instance
 
 - Live app: [hookradar.up.railway.app](https://hookradar.up.railway.app)
 
-### Railway steps
+### Railway Steps
 
 1. Push this repo to GitHub.
 2. Create a new Railway project from the GitHub repo.
@@ -179,15 +178,15 @@ Railway is the easiest way to give HookRadar a public URL without keeping your l
 6. Generate a public Railway domain.
 7. Open the app URL, create endpoints, and share `/hook/<slug>` URLs.
 
-### Why the volume matters
+### Why the Volume Matters
 
-SQLite data must live inside the mounted volume, otherwise redeploys can wipe requests and endpoints. HookRadar now supports a configurable DB path through `DATABASE_PATH`, and the Docker setup uses `/app/data/hookradar.db` by default.
+SQLite data must live inside the mounted volume. Otherwise, redeploys can remove endpoints and request history. HookRadar supports a configurable database path through `DATABASE_PATH`, and the Docker setup uses `/app/data/hookradar.db` by default.
 
 ---
 
-## 🖥️ Run on Your Own Server
+## Run on Your Own Server
 
-If a user wants to try HookRadar on their own laptop or VPS, they do **not** need your laptop.
+Anyone can run HookRadar on their own laptop, VM, or VPS. Your laptop is not required.
 
 ### Option 1: Docker Compose
 
@@ -211,7 +210,7 @@ npm start
 
 Open `http://SERVER_IP:3001`
 
-### If they need a public webhook URL from their own laptop
+### If They Need a Public Webhook URL From Their Own Laptop
 
 They can run HookRadar locally and expose it themselves using a tunnel:
 
@@ -219,11 +218,11 @@ They can run HookRadar locally and expose it themselves using a tunnel:
 cloudflared tunnel --url http://localhost:3001
 ```
 
-That gives them their own public URL, on their own machine.
+That gives them a public URL that points to their own machine.
 
 ---
 
-## ⚙️ Environment Variables
+## Environment Variables
 
 | Variable | Default | Purpose |
 |---------|---------|---------|
@@ -233,10 +232,10 @@ That gives them their own public URL, on their own machine.
 
 ---
 
-## 📡 Usage
+## Usage
 
 ### 1. Create an Endpoint
-Click **"Create Webhook Endpoint"** → Get a unique URL like `http://localhost:3001/hook/abc123` locally or `https://your-app.up.railway.app/hook/abc123` in production.
+Click **Create Webhook Endpoint** to get a unique URL such as `http://localhost:3001/hook/abc123` locally or `https://your-app.up.railway.app/hook/abc123` in production.
 
 ### 2. Send Webhooks
 
@@ -256,9 +255,9 @@ curl -X PUT http://localhost:3001/hook/YOUR_SLUG \
 ```
 
 ### 3. Inspect & Debug
-- Click any request → See **Headers**, **Body** (auto-formatted JSON), **Query Params**
-- Copy **cURL** command to reproduce any request
-- View **IP address**, **size**, **response time**, **content type**
+- Click any request to see headers, body, and query parameters
+- Copy a cURL command to reproduce the same request
+- View the IP address, size, response time, and content type
 
 ### 4. Customize Responses
 - **Status Code**: 200, 201, 400, 404, 500, etc.
@@ -267,16 +266,16 @@ curl -X PUT http://localhost:3001/hook/YOUR_SLUG \
 - **Delay**: Simulate slow responses (0-30000ms)
 
 ### 5. Replay / Forward
-Click **"Replay"** on any request → Enter target URL → Forward the exact same request
+Click **Replay** on any request, enter a target URL, and forward the same request again.
 
 ### 6. Auto-Forwarding
-Configure → Set a **Forwarding URL** → All incoming webhooks are automatically forwarded to your server in real-time. HookRadar captures first, then forwards — perfect for dev/staging mirrors.
+Set a **Forwarding URL** to automatically send each captured webhook to another server. HookRadar stores the request first, then forwards it.
 
 ### 7. Advanced Filters
-Click the **filter icon** → Filter by **Method** (GET, POST, PUT...), **Status** (2xx, 4xx, 5xx), **Content-Type**, or **Date Range**.
+Filter requests by method, status, content type, or date range.
 
 ### 8. AI Analysis
-Click **"AI"** button → Get smart source detection, security audit, auto-generated handler code (Node.js/Python), and request pattern insights. Works 100% offline!
+Use the **AI** panel to inspect request patterns, detect likely sources, review security concerns, and generate sample handler code. It runs locally.
 
 ### 9. CLI Tool
 
@@ -308,7 +307,7 @@ hookradar stats
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 hookradar/
@@ -343,7 +342,7 @@ hookradar/
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 | Phase | Timeline | Features | Status |
 |-------|----------|----------|--------|
@@ -358,32 +357,31 @@ hookradar/
 - 🔐 **HMAC Signature Verification** — Verify webhook signatures
 - 📊 **Analytics Dashboard** — Request trends & patterns
 - 🔗 **Team Collaboration** — Share endpoints with team
-- 🌍 **Multi-language Support** — Hindi, Spanish, etc.
 - 🔔 **Email/Slack Notifications** — Alert on incoming webhooks
 - 📱 **Mobile App** — Monitor webhooks on the go
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions of all kinds! Check out our [Contributing Guide](CONTRIBUTING.md).
+We welcome contributions of all kinds. See the [Contributing Guide](CONTRIBUTING.md).
 
-**You don't need to be a coding expert!** Here are ways to help:
+You do not need to be a coding expert to help. You can:
 - 🐛 Report bugs
 - 📝 Improve documentation
 - 🎨 Suggest UI improvements
-- 🌐 Translate README
+- 🌐 Improve copy or documentation
 - ⭐ Star the repo!
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Lucide Icons](https://lucide.dev/) — Beautiful icon set
 - [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — Fast SQLite bindings
@@ -391,12 +389,4 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ---
 
-<div align="center">
-
-**Made with ❤️ for the developer community**
-
-⭐ **Star this repo if you find it useful!** ⭐
-
-[Report Bug](../../issues) · [Request Feature](../../issues) · [Contributing Guide](CONTRIBUTING.md)
-
-</div>
+If you find the project useful, consider starring the repository.

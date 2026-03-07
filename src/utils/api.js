@@ -27,8 +27,13 @@ export const api = {
     deleteEndpoint: (id) => request(`/endpoints/${id}`, { method: 'DELETE' }),
 
     // Requests
-    getRequests: (endpointId, limit = 50, offset = 0) =>
-        request(`/endpoints/${endpointId}/requests?limit=${limit}&offset=${offset}`),
+    getRequests: (endpointId, limit = 50, offset = 0, filters = {}) => {
+        const params = new URLSearchParams({ limit, offset });
+        Object.entries(filters).forEach(([key, value]) => {
+            if (value) params.set(key, value);
+        });
+        return request(`/endpoints/${endpointId}/requests?${params.toString()}`);
+    },
     deleteRequest: (id) => request(`/requests/${id}`, { method: 'DELETE' }),
     clearRequests: (endpointId) => request(`/endpoints/${endpointId}/requests`, { method: 'DELETE' }),
 

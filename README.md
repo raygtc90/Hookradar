@@ -40,9 +40,12 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | 🔍 **Payload Inspector** | View headers, body, query params, method, IP, size |
 | 📜 **Request History** | All past requests saved & searchable |
 | 🔄 **Replay / Forward** | Replay any captured request to another URL |
+| 📤 **Auto-Forwarding** | Auto-forward webhooks to your server in real-time |
 | 🎨 **Response Customizer** | Set custom status codes, headers, body, and delays |
 | 📋 **cURL Export** | One-click cURL command generation for any request |
-| 🔎 **Search & Filter** | Filter requests by method, path, or body content |
+| 🔎 **Advanced Filters** | Filter by method, status, content-type, date range |
+| 🤖 **AI Analysis** | Smart source detection, security audit, code generation |
+| 🖥️ **CLI Tool** | Full CLI — `hookradar create`, `hookradar listen` |
 | 🌙 **Premium Dark UI** | Beautiful, modern interface with smooth animations |
 | 💾 **Persistent Storage** | SQLite database stores all endpoints and requests |
 | 🐳 **Docker Ready** | Self-host with a single `docker compose up` |
@@ -60,6 +63,10 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 | **Real-time** | ✅ | ❌ | ✅ | ✅ |
 | **Custom Responses** | Paid | ❌ | ✅ | ✅ |
 | **Request Replay** | Paid | ❌ | ✅ | ✅ |
+| **Auto-Forwarding** | ❌ | ❌ | ✅ | ✅ |
+| **Advanced Filters** | ❌ | ❌ | ✅ | ✅ |
+| **AI Analysis** | ❌ | ❌ | ❌ | ✅ |
+| **CLI Tool** | ❌ | ❌ | ❌ | ✅ |
 | **Docker** | ❌ | ❌ | ❌ | ✅ |
 
 > **Postman vs HookRadar:** Postman = You send requests yourself (You → API). HookRadar = Another server sends requests to you (Razorpay/GitHub → You). Both are complementary tools!
@@ -152,34 +159,75 @@ curl -X PUT http://localhost:5173/hook/YOUR_SLUG \
 ### 5. Replay / Forward
 Click **"Replay"** on any request → Enter target URL → Forward the exact same request
 
+### 6. Auto-Forwarding
+Configure → Set a **Forwarding URL** → All incoming webhooks are automatically forwarded to your server in real-time. HookRadar captures first, then forwards — perfect for dev/staging mirrors.
+
+### 7. Advanced Filters
+Click the **filter icon** → Filter by **Method** (GET, POST, PUT...), **Status** (2xx, 4xx, 5xx), **Content-Type**, or **Date Range**.
+
+### 8. AI Analysis
+Click **"AI"** button → Get smart source detection, security audit, auto-generated handler code (Node.js/Python), and request pattern insights. Works 100% offline!
+
+### 9. CLI Tool
+
+```bash
+# Install globally
+npm install -g hookradar
+
+# Create an endpoint
+hookradar create -n "My Webhook"
+
+# Listen for webhooks in real-time
+hookradar listen <slug>
+
+# Quick create + listen
+hookradar quick
+
+# List all endpoints
+hookradar list
+
+# View recent requests
+hookradar inspect <slug>
+
+# Replay to another URL
+hookradar replay <slug> https://your-server.com/webhook
+
+# Server statistics
+hookradar stats
+```
+
 ---
 
 ## 📁 Project Structure
 
 ```
 hookradar/
+├── bin/
+│   └── hookradar.js         # CLI tool
 ├── server/
-│   ├── server.js          # Express + WebSocket server
-│   └── database.js        # SQLite database setup
+│   ├── server.js            # Express + WebSocket server
+│   └── database.js          # SQLite database setup
 ├── src/
 │   ├── components/
 │   │   ├── Sidebar.jsx           # Navigation & endpoint list
 │   │   ├── Dashboard.jsx         # Home with stats & quick actions
-│   │   ├── EndpointView.jsx      # Request list + detail split view
+│   │   ├── EndpointView.jsx      # Request list + filters + detail
 │   │   ├── RequestDetail.jsx     # Request inspector (tabs)
-│   │   ├── ResponseConfig.jsx    # Custom response settings
+│   │   ├── ResponseConfig.jsx    # Response + forwarding config
+│   │   ├── AIAnalysisPanel.jsx   # AI analysis (4 tabs)
 │   │   └── CreateEndpointModal.jsx
 │   ├── utils/
-│   │   └── api.js         # API client & utilities
-│   ├── App.jsx            # Main app with state management
-│   ├── main.jsx           # Entry point
-│   └── index.css          # Design system (CSS variables)
+│   │   ├── api.js           # API client & utilities
+│   │   └── analyzer.js      # AI analysis engine (offline)
+│   ├── App.jsx              # Main app with state management
+│   ├── main.jsx             # Entry point
+│   └── index.css            # Design system (CSS variables)
 ├── public/
-│   └── hookradar-icon.svg # Logo/favicon
-├── Dockerfile             # Docker support
-├── docker-compose.yml     # Docker Compose
-├── CONTRIBUTING.md        # Contribution guide
-├── LICENSE                # MIT License
+│   └── hookradar-icon.svg   # Logo/favicon
+├── Dockerfile               # Docker support
+├── docker-compose.yml       # Docker Compose
+├── CONTRIBUTING.md          # Contribution guide
+├── LICENSE                  # MIT License
 └── package.json
 ```
 
@@ -191,18 +239,18 @@ hookradar/
 |-------|----------|----------|--------|
 | **Phase 1** | Week 1-2 | Backend + Basic UI | ✅ Done |
 | **Phase 2** | Week 3-4 | React Dashboard + WebSocket | ✅ Done |
-| **Phase 3** | Week 5-6 | Replay, Filter, CLI Tool | 🔄 In Progress |
-| **Phase 4** | Month 3-4 | AI Integration (Payload Analysis) | 📋 Planned |
-| **Phase 5** | Month 2 | Open Source Launch (Product Hunt, Reddit) | 📋 Planned |
+| **Phase 3** | Week 5-6 | Replay, Filter, CLI Tool | ✅ Done |
+| **Phase 4** | Month 3-4 | AI Integration (Payload Analysis) | ✅ Done |
+| **Phase 5** | Month 2 | Open Source Launch (Product Hunt, Reddit) | ✅ Done |
 | **Phase 6** | Ongoing | Community building, Regular releases | 📋 Planned |
 
 ### Future Features
-- 🤖 **AI-Powered Payload Analyzer** — Auto-detect webhook source & data
-- 🖥️ **CLI Tool** — `npm install -g hookradar` for terminal usage
-- 🔐 **HMAC Signature Verification** — Security analysis
+- 🔐 **HMAC Signature Verification** — Verify webhook signatures
 - 📊 **Analytics Dashboard** — Request trends & patterns
 - 🔗 **Team Collaboration** — Share endpoints with team
 - 🌍 **Multi-language Support** — Hindi, Spanish, etc.
+- 🔔 **Email/Slack Notifications** — Alert on incoming webhooks
+- 📱 **Mobile App** — Monitor webhooks on the go
 
 ---
 

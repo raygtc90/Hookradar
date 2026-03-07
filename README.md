@@ -337,7 +337,7 @@ hookradar/
 │   ├── main.jsx             # Entry point
 │   └── index.css            # Design system (CSS variables)
 ├── public/
-│   └── hookradar-icon.svg   # Logo/favicon
+│   └── hookradar-logo.webp  # Logo/favicon
 ├── Dockerfile               # Docker support
 ├── docker-compose.yml       # Docker Compose
 ├── CONTRIBUTING.md          # Contribution guide

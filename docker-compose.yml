@@ -11,6 +11,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
+      - DATABASE_PATH=/app/data/hookradar.db
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/stats" ]

@@ -35,6 +35,7 @@ RUN mkdir -p /app/data
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV DATABASE_PATH=/app/data/hookradar.db
 
 # Expose port
 EXPOSE 3001

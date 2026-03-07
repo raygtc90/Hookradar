@@ -97,16 +97,29 @@ When apps talk to each other automatically over the internet (like Razorpay tell
 ```bash
 # Clone the repository
 git clone https://github.com/aniketmishra-0/hookradar.git
-cd hookradar
+cd Hookradar
 
 # Install dependencies
 npm install
+
+# Optional: copy env template
+cp .env.example .env
 
 # Start development server (frontend + backend)
 npm run dev
 ```
 
 **That's it!** Open http://localhost:5173 🎉
+
+### Production Mode (single process)
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+Open http://localhost:3001
 
 ### 🐳 Docker (Self-hosting)
 
@@ -123,24 +136,115 @@ Open http://localhost:3001
 
 ---
 
+## 🌍 Deployment Modes
+
+HookRadar can be used in three simple ways:
+
+1. **Local development** — Run `npm run dev` on your laptop.
+2. **Self-host on your own server** — Use Docker or Node on any VPS, VM, or laptop.
+3. **Public shared instance** — Deploy once on Railway and share one public app URL.
+
+### Shared instance vs self-hosted
+
+- **Shared Railway instance:** everyone gets a unique `/hook/<slug>` URL under the same base domain.
+- **Self-hosted instance:** each user runs their own copy on their own laptop/server and owns their own data.
+
+> **Important:** The current app is best positioned as an open-source self-hosted tool. If you deploy one public Railway instance today, all users share the same app and database until auth and multi-user isolation are added.
+
+---
+
+## 🚂 Deploy on Railway
+
+Railway is the easiest way to give HookRadar a public URL without keeping your laptop on.
+
+### What Railway deployment looks like
+
+- Base app URL: `https://your-app-name.up.railway.app`
+- Webhook URL per endpoint: `https://your-app-name.up.railway.app/hook/<slug>`
+- Every user gets a different slug, but the same shared app domain
+
+### Railway steps
+
+1. Push this repo to GitHub.
+2. Create a new Railway project from the GitHub repo.
+3. Let Railway deploy the included `Dockerfile`.
+4. Add a **Volume** and mount it at `/app/data`.
+5. Keep `DATABASE_PATH=/app/data/hookradar.db`.
+6. Generate a public Railway domain.
+7. Open the app URL, create endpoints, and share `/hook/<slug>` URLs.
+
+### Why the volume matters
+
+SQLite data must live inside the mounted volume, otherwise redeploys can wipe requests and endpoints. HookRadar now supports a configurable DB path through `DATABASE_PATH`, and the Docker setup uses `/app/data/hookradar.db` by default.
+
+---
+
+## 🖥️ Run on Your Own Server
+
+If a user wants to try HookRadar on their own laptop or VPS, they do **not** need your laptop.
+
+### Option 1: Docker Compose
+
+```bash
+git clone https://github.com/aniketmishra-0/Hookradar.git
+cd Hookradar
+docker compose up -d
+```
+
+Open `http://SERVER_IP:3001`
+
+### Option 2: Node.js
+
+```bash
+git clone https://github.com/aniketmishra-0/Hookradar.git
+cd Hookradar
+npm install
+npm run build
+npm start
+```
+
+Open `http://SERVER_IP:3001`
+
+### If they need a public webhook URL from their own laptop
+
+They can run HookRadar locally and expose it themselves using a tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:3001
+```
+
+That gives them their own public URL, on their own machine.
+
+---
+
+## ⚙️ Environment Variables
+
+| Variable | Default | Purpose |
+|---------|---------|---------|
+| `PORT` | `3001` | HTTP port for the Express server |
+| `DATABASE_PATH` | `./hookradar.db` locally, `/app/data/hookradar.db` in Docker | SQLite file location |
+| `HOOKRADAR_SERVER` | `http://localhost:3001` | CLI target server |
+
+---
+
 ## 📡 Usage
 
 ### 1. Create an Endpoint
-Click **"Create Webhook Endpoint"** → Get a unique URL like `http://localhost:5173/hook/abc123`
+Click **"Create Webhook Endpoint"** → Get a unique URL like `http://localhost:3001/hook/abc123` locally or `https://your-app.up.railway.app/hook/abc123` in production.
 
 ### 2. Send Webhooks
 
 ```bash
 # POST with JSON payload
-curl -X POST http://localhost:5173/hook/YOUR_SLUG \
+curl -X POST http://localhost:3001/hook/YOUR_SLUG \
   -H "Content-Type: application/json" \
   -d '{"event": "payment.completed", "amount": 99.99, "currency": "INR"}'
 
 # GET with query parameters
-curl "http://localhost:5173/hook/YOUR_SLUG?status=active&page=1"
+curl "http://localhost:3001/hook/YOUR_SLUG?status=active&page=1"
 
 # PUT request
-curl -X PUT http://localhost:5173/hook/YOUR_SLUG \
+curl -X PUT http://localhost:3001/hook/YOUR_SLUG \
   -H "Content-Type: application/json" \
   -d '{"name": "Aniket", "role": "admin"}'
 ```

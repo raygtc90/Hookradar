@@ -17,7 +17,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/hookradar"
+    "url": "https://github.com/aniketmishra-0/Hookradar.git"
   },
   "bin": {
     "hookradar": "./bin/hookradar.js"

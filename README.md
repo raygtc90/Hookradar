@@ -1,4 +1,4 @@
-# 🛰️ HookRadar
+# <img src="public/hookradar-logo.png" width="40" style="vertical-align: middle; border-radius: 8px;" alt="HookRadar Logo" /> HookRadar
 
 ### Open Source Webhook Tester & Debugger
 

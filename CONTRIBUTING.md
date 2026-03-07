@@ -1,4 +1,4 @@
-# <img src="public/hookradar-logo.png" width="32" style="vertical-align: middle; border-radius: 6px;" alt="HookRadar Logo" /> Contributing to HookRadar
+# <img src="public/hookradar-logo.webp" width="32" style="vertical-align: middle; border-radius: 6px;" alt="HookRadar Logo" /> Contributing to HookRadar
 
 Thank you for your interest in contributing to HookRadar! This document provides guidelines and information about contributing to this project.
 
@@ -159,4 +159,4 @@ Examples of good first contributions:
 
 ---
 
-**Thank you for making HookRadar better! Every contribution matters.** <img src="public/hookradar-logo.png" width="20" style="vertical-align: middle; border-radius: 4px;" alt="HookRadar Logo" />
+**Thank you for making HookRadar better! Every contribution matters.** <img src="public/hookradar-logo.webp" width="20" style="vertical-align: middle; border-radius: 4px;" alt="HookRadar Logo" />

@@ -1,4 +1,4 @@
-# <img src="public/hookradar-logo.png" width="40" style="vertical-align: middle; border-radius: 8px;" alt="HookRadar Logo" /> HookRadar
+# <img src="public/hookradar-logo.webp" width="40" style="vertical-align: middle; border-radius: 8px;" alt="HookRadar Logo" /> HookRadar
 
 ### Open Source Webhook Tester & Debugger
 

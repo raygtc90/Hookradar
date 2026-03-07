@@ -6,7 +6,7 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
             <div className="sidebar-header">
                 <div className="sidebar-logo">
                     <div className="sidebar-logo-icon">
-                        <img src="/hookradar-logo.png" alt="HookRadar Logo" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                        <img src="/hookradar-logo.webp" alt="HookRadar Logo" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
                     </div>
                     <div>
                         <div className="sidebar-logo-text">HookRadar</div>

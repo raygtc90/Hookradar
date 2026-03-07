@@ -6,7 +6,7 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
             <div className="sidebar-header">
                 <div className="sidebar-logo">
                     <div className="sidebar-logo-icon">
-                        <img src="/hookradar-mark.svg" alt="HookRadar Logo" className="sidebar-logo-image" />
+                        <img src="/hookradar-logo-cropped.webp" alt="HookRadar Logo" className="sidebar-logo-image" />
                     </div>
                     <div>
                         <div className="sidebar-logo-text">HookRadar</div>

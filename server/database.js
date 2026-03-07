@@ -71,6 +71,25 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS schedules (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT,
+    endpoint_id TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    method TEXT DEFAULT 'POST',
+    path TEXT DEFAULT '/',
+    headers TEXT DEFAULT '{"Content-Type": "application/json"}',
+    body TEXT DEFAULT '',
+    interval_minutes INTEGER DEFAULT 5,
+    is_active INTEGER DEFAULT 1,
+    last_run_at TEXT,
+    next_run_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+  );
 `);
 
 // Add forwarding_url column if it doesn't exist (migration for existing DBs)
@@ -93,6 +112,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_method ON requests(method);
   CREATE INDEX IF NOT EXISTS idx_endpoints_slug ON endpoints(slug);
   CREATE INDEX IF NOT EXISTS idx_endpoints_owner_user_id ON endpoints(owner_user_id);
+  CREATE INDEX IF NOT EXISTS idx_schedules_endpoint_id ON schedules(endpoint_id);
+  CREATE INDEX IF NOT EXISTS idx_schedules_owner_user_id ON schedules(owner_user_id);
+  CREATE INDEX IF NOT EXISTS idx_schedules_next_run_at ON schedules(next_run_at);
+  CREATE INDEX IF NOT EXISTS idx_schedules_is_active ON schedules(is_active);
   CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -178,6 +201,89 @@ const stmts = {
 
     adoptUnownedEndpoints: db.prepare(`
     UPDATE endpoints
+    SET owner_user_id = ?, updated_at = datetime('now')
+    WHERE owner_user_id IS NULL
+  `),
+
+    // Schedules
+    createSchedule: db.prepare(`
+    INSERT INTO schedules (id, owner_user_id, endpoint_id, name, method, path, headers, body, interval_minutes, is_active, next_run_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+
+    getSchedule: db.prepare(`SELECT * FROM schedules WHERE id = ?`),
+
+    getScheduleByOwner: db.prepare(`SELECT * FROM schedules WHERE id = ? AND owner_user_id = ?`),
+
+    getScheduleWithEndpoint: db.prepare(`
+    SELECT s.*, e.slug, e.is_active as endpoint_is_active
+    FROM schedules s
+    JOIN endpoints e ON e.id = s.endpoint_id
+    WHERE s.id = ?
+  `),
+
+    getScheduleWithEndpointByOwner: db.prepare(`
+    SELECT s.*, e.slug, e.is_active as endpoint_is_active
+    FROM schedules s
+    JOIN endpoints e ON e.id = s.endpoint_id
+    WHERE s.id = ? AND s.owner_user_id = ?
+  `),
+
+    getSchedulesByEndpoint: db.prepare(`
+    SELECT * FROM schedules WHERE endpoint_id = ? ORDER BY created_at DESC
+  `),
+
+    getSchedulesByEndpointByOwner: db.prepare(`
+    SELECT * FROM schedules WHERE endpoint_id = ? AND owner_user_id = ? ORDER BY created_at DESC
+  `),
+
+    updateSchedule: db.prepare(`
+    UPDATE schedules
+    SET name = ?, method = ?, path = ?, headers = ?, body = ?, interval_minutes = ?, is_active = ?, next_run_at = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `),
+
+    updateScheduleByOwner: db.prepare(`
+    UPDATE schedules
+    SET name = ?, method = ?, path = ?, headers = ?, body = ?, interval_minutes = ?, is_active = ?, next_run_at = ?, updated_at = datetime('now')
+    WHERE id = ? AND owner_user_id = ?
+  `),
+
+    updateScheduleRuntime: db.prepare(`
+    UPDATE schedules
+    SET last_run_at = ?, next_run_at = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `),
+
+    deleteSchedule: db.prepare(`DELETE FROM schedules WHERE id = ?`),
+
+    deleteScheduleByOwner: db.prepare(`DELETE FROM schedules WHERE id = ? AND owner_user_id = ?`),
+
+    deleteSchedulesByEndpoint: db.prepare(`DELETE FROM schedules WHERE endpoint_id = ?`),
+
+    deleteSchedulesByEndpointByOwner: db.prepare(`
+    DELETE FROM schedules
+    WHERE endpoint_id IN (
+      SELECT id
+      FROM endpoints
+      WHERE id = ? AND owner_user_id = ?
+    )
+  `),
+
+    getDueSchedules: db.prepare(`
+    SELECT s.*, e.slug
+    FROM schedules s
+    JOIN endpoints e ON e.id = s.endpoint_id
+    WHERE s.is_active = 1
+      AND e.is_active = 1
+      AND s.next_run_at IS NOT NULL
+      AND s.next_run_at <= datetime('now')
+    ORDER BY s.next_run_at ASC
+    LIMIT 25
+  `),
+
+    adoptUnownedSchedules: db.prepare(`
+    UPDATE schedules
     SET owner_user_id = ?, updated_at = datetime('now')
     WHERE owner_user_id IS NULL
   `),

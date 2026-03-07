@@ -31,6 +31,11 @@ export const api = {
     getEndpoint: (id) => request(`/endpoints/${id}`),
     updateEndpoint: (id, data) => request(`/endpoints/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteEndpoint: (id) => request(`/endpoints/${id}`, { method: 'DELETE' }),
+    getSchedules: (endpointId) => request(`/endpoints/${endpointId}/schedules`),
+    createSchedule: (endpointId, data) => request(`/endpoints/${endpointId}/schedules`, { method: 'POST', body: JSON.stringify(data) }),
+    updateSchedule: (scheduleId, data) => request(`/schedules/${scheduleId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    runScheduleNow: (scheduleId) => request(`/schedules/${scheduleId}/run`, { method: 'POST' }),
+    deleteSchedule: (scheduleId) => request(`/schedules/${scheduleId}`, { method: 'DELETE' }),
 
     // Requests
     getRequests: (endpointId, limit = 50, offset = 0, filters = {}) => {

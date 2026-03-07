@@ -20,11 +20,13 @@ import {
     verifyPassword,
 } from './auth.js';
 import { db, stmts } from './database.js';
+import { computeNextRunAt, normalizeSchedulePath, runScheduleNow, startScheduler, stopScheduler } from './scheduler.js';
 import { getPublicTunnelStatus, startPublicTunnel, stopPublicTunnel } from './tunnel.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const LEGACY_GLOBAL_CHANNEL = '__legacy__';
+const SCHEDULE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 
 app.set('trust proxy', 1);
 
@@ -76,12 +78,63 @@ function getRequestForRequest(req, requestId) {
     return stmts.getRequest.get(requestId);
 }
 
+function getScheduleForRequest(req, scheduleId) {
+    if (req.authEnabled) {
+        return stmts.getScheduleWithEndpointByOwner.get(scheduleId, req.user.id);
+    }
+
+    return stmts.getScheduleWithEndpoint.get(scheduleId);
+}
+
 function normalizeSlug(input) {
     return (input || '').trim().toLowerCase();
 }
 
 function isValidSlug(slug) {
     return /^[a-z0-9][a-z0-9-_]{2,63}$/.test(slug);
+}
+
+function parseScheduleHeaders(input) {
+    const rawHeaders = typeof input === 'string'
+        ? input.trim()
+        : JSON.stringify(input ?? {});
+
+    const parsed = JSON.parse(rawHeaders || '{}');
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Schedule headers must be a JSON object');
+    }
+
+    return JSON.stringify(parsed);
+}
+
+function normalizeScheduleInput(input, existing = {}) {
+    const name = (input.name ?? existing.name ?? '').trim();
+    const method = String(input.method ?? existing.method ?? 'POST').trim().toUpperCase();
+    const path = normalizeSchedulePath(input.path ?? existing.path ?? '/');
+    const body = input.body ?? existing.body ?? '';
+    const intervalMinutes = parseInt(input.interval_minutes ?? existing.interval_minutes ?? 5, 10);
+    const isActiveValue = input.is_active ?? existing.is_active ?? 1;
+    const isActive = isActiveValue === true || isActiveValue === 1 || isActiveValue === '1' ? 1 : 0;
+
+    if (!SCHEDULE_METHODS.has(method)) {
+        throw new Error('Choose a valid HTTP method for the schedule');
+    }
+
+    if (!Number.isInteger(intervalMinutes) || intervalMinutes < 1 || intervalMinutes > 1440) {
+        throw new Error('Interval must be between 1 and 1440 minutes');
+    }
+
+    return {
+        name,
+        method,
+        path,
+        headers: parseScheduleHeaders(input.headers ?? existing.headers ?? '{}'),
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        interval_minutes: intervalMinutes,
+        is_active: isActive,
+        next_run_at: isActive ? computeNextRunAt(intervalMinutes) : null,
+    };
 }
 
 function escapeCsvValue(value) {
@@ -238,6 +291,7 @@ app.post('/api/auth/signup', (req, res) => {
 
         if (existingUserCount === 0) {
             stmts.adoptUnownedEndpoints.run(userId);
+            stmts.adoptUnownedSchedules.run(userId);
         }
 
         const sessionToken = createSessionToken();
@@ -457,11 +511,148 @@ app.delete('/api/endpoints/:id', requireAccess, (req, res) => {
         }
 
         if (req.authEnabled) {
+            stmts.deleteSchedulesByEndpointByOwner.run(req.params.id, req.user.id);
             stmts.deleteRequestsByEndpointByOwner.run(req.params.id, req.user.id);
             stmts.deleteEndpointByOwner.run(req.params.id, req.user.id);
         } else {
+            stmts.deleteSchedulesByEndpoint.run(req.params.id);
             stmts.deleteRequestsByEndpoint.run(req.params.id);
             stmts.deleteEndpoint.run(req.params.id);
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/endpoints/:id/schedules', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const schedules = req.authEnabled
+            ? stmts.getSchedulesByEndpointByOwner.all(req.params.id, req.user.id)
+            : stmts.getSchedulesByEndpoint.all(req.params.id);
+
+        res.json({ success: true, data: schedules });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/endpoints/:id/schedules', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const scheduleId = uuidv4();
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+        const scheduleInput = normalizeScheduleInput(req.body);
+
+        stmts.createSchedule.run(
+            scheduleId,
+            ownerUserId,
+            req.params.id,
+            scheduleInput.name,
+            scheduleInput.method,
+            scheduleInput.path,
+            scheduleInput.headers,
+            scheduleInput.body,
+            scheduleInput.interval_minutes,
+            scheduleInput.is_active,
+            scheduleInput.next_run_at,
+        );
+
+        const schedule = req.authEnabled
+            ? stmts.getScheduleByOwner.get(scheduleId, req.user.id)
+            : stmts.getSchedule.get(scheduleId);
+
+        res.status(201).json({ success: true, data: schedule });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/schedules/:id', requireAccess, (req, res) => {
+    try {
+        const existing = getScheduleForRequest(req, req.params.id);
+        if (!existing) {
+            return res.status(404).json({ success: false, error: 'Schedule not found' });
+        }
+
+        const scheduleInput = normalizeScheduleInput(req.body, existing);
+
+        if (req.authEnabled) {
+            stmts.updateScheduleByOwner.run(
+                scheduleInput.name,
+                scheduleInput.method,
+                scheduleInput.path,
+                scheduleInput.headers,
+                scheduleInput.body,
+                scheduleInput.interval_minutes,
+                scheduleInput.is_active,
+                scheduleInput.next_run_at,
+                req.params.id,
+                req.user.id,
+            );
+        } else {
+            stmts.updateSchedule.run(
+                scheduleInput.name,
+                scheduleInput.method,
+                scheduleInput.path,
+                scheduleInput.headers,
+                scheduleInput.body,
+                scheduleInput.interval_minutes,
+                scheduleInput.is_active,
+                scheduleInput.next_run_at,
+                req.params.id,
+            );
+        }
+
+        const updated = req.authEnabled
+            ? stmts.getScheduleByOwner.get(req.params.id, req.user.id)
+            : stmts.getSchedule.get(req.params.id);
+
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/schedules/:id/run', requireAccess, async (req, res) => {
+    try {
+        const schedule = getScheduleForRequest(req, req.params.id);
+        if (!schedule) {
+            return res.status(404).json({ success: false, error: 'Schedule not found' });
+        }
+
+        const result = await runScheduleNow(schedule);
+        const updated = req.authEnabled
+            ? stmts.getScheduleByOwner.get(req.params.id, req.user.id)
+            : stmts.getSchedule.get(req.params.id);
+
+        res.json({ success: true, data: { ...result, schedule: updated } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/schedules/:id', requireAccess, (req, res) => {
+    try {
+        const schedule = getScheduleForRequest(req, req.params.id);
+        if (!schedule) {
+            return res.status(404).json({ success: false, error: 'Schedule not found' });
+        }
+
+        if (req.authEnabled) {
+            stmts.deleteScheduleByOwner.run(req.params.id, req.user.id);
+        } else {
+            stmts.deleteSchedule.run(req.params.id);
         }
 
         res.json({ success: true });
@@ -805,7 +996,16 @@ if (fs.existsSync(distPath)) {
     console.log('📦 Serving static frontend from /dist');
 }
 
+server.on('close', () => {
+    stopScheduler();
+});
+
+process.once('exit', () => {
+    stopScheduler();
+});
+
 server.listen(PORT, () => {
+    startScheduler({ port: PORT });
     console.log(`\n🚀 HookRadar Server running on http://localhost:${PORT}`);
     console.log(`📡 WebSocket available at ws://localhost:${PORT}/ws`);
     console.log(`🪝 Webhook endpoints at http://localhost:${PORT}/hook/<slug>\n`);

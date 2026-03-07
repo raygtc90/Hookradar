@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Activity, Clock3, ExternalLink, RotateCcw, Save, ShieldCheck, Zap } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import SchedulePanel from './SchedulePanel';
 
 function getConfigDefaults(endpoint) {
     return {
@@ -140,6 +141,8 @@ export default function ResponseConfig({ endpoint, onUpdate }) {
                             </div>
                         </div>
                     </div>
+
+                    <SchedulePanel endpoint={endpoint} />
 
                     <div className="settings-section">
                         <h3>

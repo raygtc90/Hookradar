@@ -38,7 +38,7 @@ export default function Sidebar({
             <div className="sidebar-header">
                 <button className="sidebar-logo" onClick={() => onNavigate('dashboard')}>
                     <div className="sidebar-logo-icon">
-                        <img src="/hookradar-logo-cropped.webp" alt="HookRadar Logo" className="sidebar-logo-image" />
+                        <img src="/hookradar-logo.webp" alt="HookRadar Logo" className="sidebar-logo-image" />
                     </div>
                     <div>
                         <div className="sidebar-logo-text">HookRadar</div>

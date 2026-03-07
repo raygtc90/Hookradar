@@ -180,6 +180,14 @@ app.use((req, res, next) => {
     next();
 });
 
+app.get('/health', (req, res) => {
+    res.json({
+        success: true,
+        status: 'ok',
+        auth_enabled: req.authEnabled,
+    });
+});
+
 // Create HTTP server
 const server = http.createServer(app);
 

@@ -11,6 +11,8 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=white)](https://reactjs.org)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](CONTRIBUTING.md)
 
+**Live App:** [hookradar.up.railway.app](https://hookradar.up.railway.app)
+
 ---
 
 ## 🤔 What is HookRadar?
@@ -162,6 +164,10 @@ Railway is the easiest way to give HookRadar a public URL without keeping your l
 - Base app URL: `https://your-app-name.up.railway.app`
 - Webhook URL per endpoint: `https://your-app-name.up.railway.app/hook/<slug>`
 - Every user gets a different slug, but the same shared app domain
+
+### Current public instance
+
+- Live app: [hookradar.up.railway.app](https://hookradar.up.railway.app)
 
 ### Railway steps
 

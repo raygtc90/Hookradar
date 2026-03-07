@@ -20,6 +20,7 @@ import {
     verifyPassword,
 } from './auth.js';
 import { db, stmts } from './database.js';
+import { getPublicTunnelStatus, startPublicTunnel, stopPublicTunnel } from './tunnel.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -300,6 +301,29 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ==================== API Routes ====================
+
+app.get('/api/public-url/status', requireAccess, (req, res) => {
+    res.json({ success: true, data: getPublicTunnelStatus() });
+});
+
+app.post('/api/public-url/start', requireAccess, async (req, res) => {
+    try {
+        const targetUrl = (req.body.target_url || '').trim();
+        const status = await startPublicTunnel(targetUrl);
+        res.json({ success: true, data: status });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/public-url/stop', requireAccess, async (req, res) => {
+    try {
+        const status = await stopPublicTunnel();
+        res.json({ success: true, data: status });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 app.get('/api/endpoints', requireAccess, (req, res) => {
     try {

@@ -47,6 +47,12 @@ export const api = {
     replayRequest: (id, targetUrl) =>
         request(`/requests/${id}/replay`, { method: 'POST', body: JSON.stringify({ target_url: targetUrl }) }),
 
+    // Public URL / tunnel
+    getPublicTunnelStatus: () => request('/public-url/status'),
+    startPublicTunnel: (targetUrl) =>
+        request('/public-url/start', { method: 'POST', body: JSON.stringify({ target_url: targetUrl }) }),
+    stopPublicTunnel: () => request('/public-url/stop', { method: 'POST' }),
+
     // Stats
     getStats: () => request('/stats'),
 
@@ -124,7 +130,15 @@ export function prettyJSON(str) {
 }
 
 export function getWebhookUrl(slug) {
-    return `${window.location.origin}/hook/${slug}`;
+    return buildWebhookUrl(window.location.origin, slug);
+}
+
+export function buildWebhookUrl(baseUrl, slug) {
+    return `${baseUrl.replace(/\/$/, '')}/hook/${slug}`;
+}
+
+export function isLocalHostname(hostname) {
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
 }
 
 export function normalizeRequestPath(path) {

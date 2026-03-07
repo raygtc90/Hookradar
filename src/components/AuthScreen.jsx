@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LockKeyhole, LogIn, Moon, ShieldCheck, Sun, UserPlus, Webhook } from 'lucide-react';
+import { LockKeyhole, LogIn, Moon, Radio, ShieldCheck, Sun, UserPlus, Webhook } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { api } from '../utils/api';
 
@@ -40,13 +40,9 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
 
     return (
         <div className="auth-shell">
-            <button
-                className="btn btn-secondary auth-theme-toggle"
-                onClick={toggleTheme}
-                type="button"
-            >
+            <button className="btn btn-secondary auth-theme-toggle" onClick={toggleTheme} type="button">
                 {theme === 'dark' ? <Sun className="icon" /> : <Moon className="icon" />}
-                {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
             </button>
 
             <div className="auth-card">
@@ -57,31 +53,31 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
                         </div>
                         <div>
                             <h1>HookRadar</h1>
-                            <p>Private workspaces for webhook inspection</p>
+                            <p>Webhook operations, now in a sharper private workspace.</p>
                         </div>
                     </div>
 
                     <div className="auth-copy-body">
-                        <h2>{setupRequired ? 'Create the first account' : 'Sign in to your workspace'}</h2>
+                        <h2>{setupRequired ? 'Create the first operator account' : 'Open your webhook control deck'}</h2>
                         <p>
                             {setupRequired
-                                ? 'The first account becomes the owner of any existing endpoints on this instance.'
-                                : 'Each account sees only its own endpoints, requests, and exports.'}
+                                ? 'The first account becomes the owner of existing endpoints and request history on this deployment.'
+                                : 'Each account gets its own isolated endpoints, captures, exports, and response settings.'}
                         </p>
                     </div>
 
                     <div className="auth-feature-list">
                         <div className="auth-feature-item">
+                            <Radio size={16} />
+                            Realtime request streams with searchable request history
+                        </div>
+                        <div className="auth-feature-item">
                             <ShieldCheck size={16} />
-                            Private endpoints and request history per account
+                            Custom responses, delays, forwarding, and endpoint state controls
                         </div>
                         <div className="auth-feature-item">
                             <LockKeyhole size={16} />
-                            Session-based access control for shared deployments
-                        </div>
-                        <div className="auth-feature-item">
-                            <Webhook size={16} />
-                            Custom webhook slugs and CSV exports
+                            Session-based isolation for shared deployments and team instances
                         </div>
                     </div>
                 </div>

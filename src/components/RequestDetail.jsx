@@ -1,5 +1,16 @@
 import { useState } from 'react';
-import { Copy, Check, Trash2, Send, Clock, Hash, ArrowUpRight, FileText, Code2, Globe } from 'lucide-react';
+import {
+    ArrowUpRight,
+    Check,
+    Clock,
+    Code2,
+    Copy,
+    FileText,
+    Globe,
+    Send,
+    TimerReset,
+    Trash2,
+} from 'lucide-react';
 import { api, getMethodClass, getStatusClass, formatTime, formatBytes, normalizeRequestPath, prettyJSON, tryParseJSON } from '../utils/api';
 import { toast } from 'react-hot-toast';
 
@@ -17,11 +28,26 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
     const queryEntries = Object.entries(queryParams);
     const requestPath = normalizeRequestPath(request.path);
 
+    const overviewCards = [
+        { icon: Clock, label: 'Captured', value: formatTime(request.created_at) },
+        { icon: FileText, label: 'Payload size', value: formatBytes(request.size) },
+        { icon: Globe, label: 'Source IP', value: request.ip_address || 'Unknown' },
+        { icon: Code2, label: 'Content type', value: request.content_type || 'Raw payload' },
+        { icon: TimerReset, label: 'Response time', value: request.response_time > 0 ? `${request.response_time}ms` : 'Instant' },
+    ];
+
+    const tabs = [
+        { id: 'headers', label: 'Headers', count: headerEntries.length },
+        { id: 'body', label: 'Body', count: request.body ? 1 : 0 },
+        { id: 'query', label: 'Query', count: queryEntries.length },
+        { id: 'curl', label: 'cURL', count: null },
+    ];
+
     const handleCopy = async (text, key) => {
         try {
             await navigator.clipboard.writeText(text);
             setCopied(key);
-            setTimeout(() => setCopied(''), 2000);
+            window.setTimeout(() => setCopied(''), 2000);
         } catch {
             toast.error('Failed to copy');
         }
@@ -32,11 +58,13 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
             toast.error('Enter a target URL');
             return;
         }
+
         setReplaying(true);
+
         try {
-            const res = await api.replayRequest(request.id, replayUrl);
-            setReplayResult(res.data);
-            toast.success('Request replayed successfully!');
+            const response = await api.replayRequest(request.id, replayUrl);
+            setReplayResult(response.data);
+            toast.success('Request replayed successfully');
         } catch (err) {
             toast.error(err.message);
         } finally {
@@ -45,78 +73,66 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
     };
 
     const generateCurlCommand = () => {
-        let curl = `curl -X ${request.method}`;
+        let command = `curl -X ${request.method}`;
 
-        // Add important headers
-        ['content-type', 'authorization', 'x-api-key', 'accept'].forEach(h => {
-            if (headers[h]) {
-                curl += ` \\\n  -H "${h}: ${headers[h]}"`;
+        ['content-type', 'authorization', 'x-api-key', 'accept'].forEach((header) => {
+            if (headers[header]) {
+                command += ` \\\n  -H "${header}: ${headers[header]}"`;
             }
         });
 
         if (request.body && !['GET', 'HEAD'].includes(request.method)) {
-            curl += ` \\\n  -d '${request.body.replace(/'/g, "\\'")}'`;
+            command += ` \\\n  -d '${request.body.replace(/'/g, "\\'")}'`;
         }
 
-        curl += ` \\\n  "${webhookUrl}${requestPath !== '/' ? requestPath : ''}"`;
-
-        return curl;
+        command += ` \\\n  "${webhookUrl}${requestPath !== '/' ? requestPath : ''}"`;
+        return command;
     };
 
-    const tabs = [
-        { id: 'headers', label: 'Headers', count: headerEntries.length },
-        { id: 'body', label: 'Body', count: request.body ? 1 : 0 },
-        { id: 'query', label: 'Query', count: queryEntries.length },
-        { id: 'curl', label: 'cURL', count: null },
-    ];
-
     return (
-        <div>
-            {/* Header */}
+        <div className="request-detail-shell">
             <div className="request-detail-header">
-                <div className="request-detail-title">
-                    <span className={`request-method ${getMethodClass(request.method)}`} style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
-                        {request.method}
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>
-                        {requestPath}
-                    </span>
-                    <span className={`request-status ${getStatusClass(request.response_status)}`}>
-                        {request.response_status}
-                    </span>
+                <div className="request-detail-heading">
+                    <div className="request-detail-kicker">Captured event</div>
+                    <div className="request-detail-title">
+                        <span className={`request-method ${getMethodClass(request.method)}`}>{request.method}</span>
+                        <span className="request-detail-path">{requestPath}</span>
+                        <span className={`request-status ${getStatusClass(request.response_status)}`}>{request.response_status}</span>
+                    </div>
+                    <div className="request-detail-pills">
+                        <span className="request-pill">ID {request.id.slice(0, 8)}</span>
+                        <span className="request-pill">{headerEntries.length} headers</span>
+                        <span className="request-pill">{queryEntries.length} query params</span>
+                    </div>
                 </div>
+
                 <div className="request-detail-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowReplay(!showReplay)} title="Replay/Forward">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setShowReplay((current) => !current)} title="Replay request">
                         <Send className="icon" size={14} />
                         Replay
                     </button>
-                    <button className="btn btn-danger btn-sm" onClick={() => onDelete(request.id)} title="Delete">
+                    <button className="btn btn-danger btn-sm" onClick={() => onDelete(request.id)} title="Delete request">
                         <Trash2 className="icon" size={14} />
+                        Delete
                     </button>
                 </div>
             </div>
 
-            {/* Replay Panel */}
             {showReplay && (
-                <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-primary)', background: 'var(--bg-tertiary)' }}>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div className="request-replay-panel">
+                    <div className="request-replay-header">
                         <ArrowUpRight size={14} />
-                        Forward this request to another URL
+                        Forward this exact request to another URL
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="request-replay-row">
                         <input
                             type="url"
                             placeholder="https://example.com/webhook"
                             value={replayUrl}
-                            onChange={e => setReplayUrl(e.target.value)}
+                            onChange={(event) => setReplayUrl(event.target.value)}
                             className="form-input mono"
-                            style={{ flex: 1, padding: '8px 12px' }}
                         />
-                        <button
-                            className="btn btn-primary btn-sm"
-                            onClick={handleReplay}
-                            disabled={replaying}
-                        >
+                        <button className="btn btn-primary btn-sm" onClick={handleReplay} disabled={replaying}>
                             {replaying ? 'Sending...' : 'Send'}
                         </button>
                     </div>
@@ -124,9 +140,7 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
                     {replayResult && (
                         <div className="replay-result">
                             <div className="replay-result-status">
-                                <span className={`request-status ${getStatusClass(replayResult.status)}`}>
-                                    {replayResult.status}
-                                </span>
+                                <span className={`request-status ${getStatusClass(replayResult.status)}`}>{replayResult.status}</span>
                                 Response received
                             </div>
                             <div className="replay-result-body">{prettyJSON(replayResult.body)}</div>
@@ -135,137 +149,110 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
                 </div>
             )}
 
-            {/* Meta info */}
-            <div style={{ padding: '10px 20px', display: 'flex', gap: '20px', borderBottom: '1px solid var(--border-primary)', flexWrap: 'wrap' }}>
-                <div className="endpoint-meta-item">
-                    <Clock className="icon" />
-                    {formatTime(request.created_at)}
-                </div>
-                <div className="endpoint-meta-item">
-                    <FileText className="icon" />
-                    {formatBytes(request.size)}
-                </div>
-                <div className="endpoint-meta-item">
-                    <Globe className="icon" />
-                    {request.ip_address || 'Unknown'}
-                </div>
-                {request.response_time > 0 && (
-                    <div className="endpoint-meta-item">
-                        <Clock className="icon" />
-                        {request.response_time}ms
+            <div className="request-summary-grid">
+                {overviewCards.map((card) => (
+                    <div key={card.label} className="request-summary-card">
+                        <div className="request-summary-icon">
+                            <card.icon size={15} />
+                        </div>
+                        <div>
+                            <span>{card.label}</span>
+                            <strong>{card.value}</strong>
+                        </div>
                     </div>
-                )}
-                {request.content_type && (
-                    <div className="endpoint-meta-item">
-                        <Code2 className="icon" />
-                        {request.content_type}
-                    </div>
-                )}
+                ))}
             </div>
 
-            {/* Tabs */}
             <div className="detail-tabs">
-                {tabs.map(tab => (
+                {tabs.map((tab) => (
                     <button
                         key={tab.id}
                         className={`detail-tab ${activeTab === tab.id ? 'active' : ''}`}
                         onClick={() => setActiveTab(tab.id)}
                     >
                         {tab.label}
-                        {tab.count !== null && tab.count > 0 && (
-                            <span className="detail-tab-badge">{tab.count}</span>
-                        )}
+                        {tab.count !== null && tab.count > 0 && <span className="detail-tab-badge">{tab.count}</span>}
                     </button>
                 ))}
             </div>
 
-            {/* Tab Content */}
             <div className="detail-content">
                 {activeTab === 'headers' && (
-                    <div>
-                        {headerEntries.length > 0 ? (
-                            <table className="kv-table">
-                                <tbody>
-                                    {headerEntries.map(([key, value]) => (
+                    headerEntries.length > 0 ? (
+                        <table className="kv-table">
+                            <tbody>
+                                {headerEntries.map(([key, value]) => {
+                                    const renderedValue = typeof value === 'string' ? value : JSON.stringify(value);
+
+                                    return (
                                         <tr key={key}>
                                             <td>{key}</td>
                                             <td>
-                                                {typeof value === 'string' ? value : JSON.stringify(value)}
+                                                {renderedValue}
                                                 <button
                                                     className="copy-btn"
-                                                    onClick={() => handleCopy(typeof value === 'string' ? value : JSON.stringify(value), key)}
-                                                    style={{ marginLeft: '8px' }}
+                                                    onClick={() => handleCopy(renderedValue, key)}
                                                 >
                                                     {copied === key ? <Check className="icon" size={12} /> : <Copy className="icon" size={12} />}
                                                 </button>
                                             </td>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        ) : (
-                            <div className="empty-state" style={{ padding: '24px' }}>
-                                <p>No headers</p>
-                            </div>
-                        )}
-                    </div>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <div className="empty-state compact">
+                            <p>No headers were captured for this request.</p>
+                        </div>
+                    )
                 )}
 
                 {activeTab === 'body' && (
-                    <div>
-                        {request.body ? (
-                            <div className="code-block">
-                                <div className="code-block-header">
-                                    <span>{request.content_type || 'Raw body'}</span>
-                                    <button
-                                        className="copy-btn"
-                                        onClick={() => handleCopy(prettyJSON(request.body), 'body')}
-                                    >
-                                        {copied === 'body' ? <Check className="icon" /> : <Copy className="icon" />}
-                                        {copied === 'body' ? 'Copied!' : 'Copy'}
-                                    </button>
-                                </div>
-                                <pre className="code-block-body">{prettyJSON(request.body)}</pre>
+                    request.body ? (
+                        <div className="code-block">
+                            <div className="code-block-header">
+                                <span>{request.content_type || 'Raw body'}</span>
+                                <button className="copy-btn" onClick={() => handleCopy(prettyJSON(request.body), 'body')}>
+                                    {copied === 'body' ? <Check className="icon" /> : <Copy className="icon" />}
+                                    {copied === 'body' ? 'Copied' : 'Copy'}
+                                </button>
                             </div>
-                        ) : (
-                            <div className="empty-state" style={{ padding: '24px' }}>
-                                <p>No request body</p>
-                            </div>
-                        )}
-                    </div>
+                            <pre className="code-block-body">{prettyJSON(request.body)}</pre>
+                        </div>
+                    ) : (
+                        <div className="empty-state compact">
+                            <p>No request body was sent.</p>
+                        </div>
+                    )
                 )}
 
                 {activeTab === 'query' && (
-                    <div>
-                        {queryEntries.length > 0 ? (
-                            <table className="kv-table">
-                                <tbody>
-                                    {queryEntries.map(([key, value]) => (
-                                        <tr key={key}>
-                                            <td>{key}</td>
-                                            <td>{typeof value === 'string' ? value : JSON.stringify(value)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        ) : (
-                            <div className="empty-state" style={{ padding: '24px' }}>
-                                <p>No query parameters</p>
-                            </div>
-                        )}
-                    </div>
+                    queryEntries.length > 0 ? (
+                        <table className="kv-table">
+                            <tbody>
+                                {queryEntries.map(([key, value]) => (
+                                    <tr key={key}>
+                                        <td>{key}</td>
+                                        <td>{typeof value === 'string' ? value : JSON.stringify(value)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <div className="empty-state compact">
+                            <p>No query parameters were captured.</p>
+                        </div>
+                    )
                 )}
 
                 {activeTab === 'curl' && (
                     <div className="code-block">
                         <div className="code-block-header">
-                            <span>cURL command</span>
-                            <button
-                                className="copy-btn"
-                                onClick={() => handleCopy(generateCurlCommand(), 'curl')}
-                            >
+                            <span>Generated cURL command</span>
+                            <button className="copy-btn" onClick={() => handleCopy(generateCurlCommand(), 'curl')}>
                                 {copied === 'curl' ? <Check className="icon" /> : <Copy className="icon" />}
-                                {copied === 'curl' ? 'Copied!' : 'Copy'}
+                                {copied === 'curl' ? 'Copied' : 'Copy'}
                             </button>
                         </div>
                         <pre className="code-block-body">{generateCurlCommand()}</pre>

@@ -1,26 +1,69 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-    Activity, Copy, Check, Download, Trash2, Settings, Clock, Hash,
-    Search, Inbox, ArrowRight, RefreshCw, ExternalLink, Brain,
-    X, SlidersHorizontal
+    Activity,
+    ArrowRight,
+    Brain,
+    Check,
+    Clock,
+    Copy,
+    Download,
+    ExternalLink,
+    Gauge,
+    Hash,
+    Inbox,
+    Radio,
+    RefreshCw,
+    Search,
+    Settings,
+    SlidersHorizontal,
+    Sparkles,
+    Trash2,
+    Webhook,
+    X,
 } from 'lucide-react';
 import RequestDetail from './RequestDetail';
 import ResponseConfig from './ResponseConfig';
 import AIAnalysisPanel from './AIAnalysisPanel';
-import { api, formatTime, getMethodClass, getStatusClass, getWebhookUrl, normalizeRequestPath } from '../utils/api';
+import {
+    api,
+    buildWebhookUrl,
+    formatTime,
+    getMethodClass,
+    getStatusClass,
+    getWebhookUrl,
+    isLocalHostname,
+    normalizeRequestPath,
+} from '../utils/api';
 import { toast } from 'react-hot-toast';
 
+const isEndpointActive = (endpoint) => endpoint.is_active === 1 || endpoint.is_active === true;
+const getHostedPublicState = (origin) => ({
+    provider: 'hosted',
+    installed: true,
+    running: true,
+    public_base_url: origin,
+    target_url: origin,
+    source: 'app_origin',
+    started_at: null,
+    error: null,
+    install_url: null,
+});
+
 export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) {
+    const appOrigin = window.location.origin;
+    const appIsLocal = isLocalHostname(window.location.hostname);
     const [requests, setRequests] = useState([]);
     const [selectedRequest, setSelectedRequest] = useState(null);
     const [totalRequests, setTotalRequests] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [copied, setCopied] = useState(false);
+    const [publicCopied, setPublicCopied] = useState(false);
     const [showConfig, setShowConfig] = useState(false);
     const [showAI, setShowAI] = useState(false);
     const [loading, setLoading] = useState(true);
-
-    // Advanced Filters
+    const [publicTunnel, setPublicTunnel] = useState(() => (appIsLocal ? null : getHostedPublicState(appOrigin)));
+    const [publicTunnelLoading, setPublicTunnelLoading] = useState(appIsLocal);
+    const [publicTunnelAction, setPublicTunnelAction] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [filters, setFilters] = useState({
         method: '',
@@ -29,19 +72,35 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
         date_from: '',
         date_to: '',
     });
-    const activeFilterCount = Object.values(filters).filter(value => value !== '').length;
 
-    const webhookUrl = getWebhookUrl(endpoint.slug);
+    const activeFilterCount = Object.values(filters).filter((value) => value !== '').length;
+    const localWebhookUrl = getWebhookUrl(endpoint.slug);
+    const isActive = isEndpointActive(endpoint);
+    const latestRequest = requests[0] || null;
+    const successfulRequests = requests.filter((request) => request.response_status >= 200 && request.response_status < 400).length;
+    const successRate = requests.length ? Math.round((successfulRequests / requests.length) * 100) : 0;
+    const averageLatency = requests.length
+        ? Math.round(requests.reduce((sum, request) => sum + (request.response_time || 0), 0) / requests.length)
+        : 0;
+    const methodCount = new Set(requests.map((request) => request.method)).size;
+    const publicBaseUrl = publicTunnel?.public_base_url || '';
+    const publicWebhookUrl = publicBaseUrl ? buildWebhookUrl(publicBaseUrl, endpoint.slug) : '';
+    const requestWebhookUrl = publicWebhookUrl || localWebhookUrl;
+    const publicUrlReady = Boolean(publicWebhookUrl);
+    const shouldShowPublicUrlBar = appIsLocal || Boolean(publicTunnel?.error) || Boolean(publicTunnel && publicWebhookUrl !== localWebhookUrl);
+    const publicUrlBusy = publicTunnelLoading || Boolean(publicTunnelAction);
 
-    // Load requests with filters
     const loadRequests = useCallback(async () => {
+        setLoading(true);
+
         try {
-            const res = await api.getRequests(endpoint.id, 50, 0, {
+            const response = await api.getRequests(endpoint.id, 50, 0, {
                 ...filters,
                 search: searchQuery,
             });
-            setRequests(res.data);
-            setTotalRequests(res.total);
+
+            setRequests(response.data);
+            setTotalRequests(response.total);
         } catch (err) {
             console.error('Failed to load requests:', err);
             toast.error(err.message);
@@ -50,32 +109,115 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
         }
     }, [endpoint.id, filters, searchQuery]);
 
+    const loadPublicTunnelStatus = useCallback(async ({ silent = false } = {}) => {
+        if (!appIsLocal) {
+            setPublicTunnel(getHostedPublicState(appOrigin));
+            setPublicTunnelLoading(false);
+            return;
+        }
+
+        setPublicTunnelLoading(true);
+
+        try {
+            const response = await api.getPublicTunnelStatus();
+            setPublicTunnel(response.data);
+        } catch (err) {
+            if (!silent) {
+                toast.error(err.message);
+            }
+        } finally {
+            setPublicTunnelLoading(false);
+        }
+    }, [appIsLocal, appOrigin]);
+
     useEffect(() => {
         loadRequests();
     }, [loadRequests]);
 
-    // Reload when new request comes in
+    useEffect(() => {
+        loadPublicTunnelStatus({ silent: true });
+    }, [loadPublicTunnelStatus]);
+
     useEffect(() => {
         if (newRequestTrigger > 0) {
             loadRequests();
         }
     }, [newRequestTrigger, loadRequests]);
 
-    // Copy webhook URL
+    useEffect(() => {
+        if (!requests.length) {
+            setSelectedRequest(null);
+            return;
+        }
+
+        setSelectedRequest((current) => requests.find((request) => request.id === current?.id) || requests[0]);
+    }, [requests]);
+
     const handleCopy = async () => {
         try {
-            await navigator.clipboard.writeText(webhookUrl);
+            await navigator.clipboard.writeText(localWebhookUrl);
             setCopied(true);
-            toast.success('URL copied to clipboard!');
-            setTimeout(() => setCopied(false), 2000);
+            toast.success('URL copied to clipboard');
+            window.setTimeout(() => setCopied(false), 2000);
         } catch {
             toast.error('Failed to copy');
         }
     };
 
-    // Clear all requests
+    const handleCopyPublic = async () => {
+        if (!publicWebhookUrl) return;
+
+        try {
+            await navigator.clipboard.writeText(publicWebhookUrl);
+            setPublicCopied(true);
+            toast.success('Public URL copied to clipboard');
+            window.setTimeout(() => setPublicCopied(false), 2000);
+        } catch {
+            toast.error('Failed to copy');
+        }
+    };
+
+    const handleStartPublicUrl = async () => {
+        if (!appIsLocal) return;
+
+        if (publicTunnel?.installed === false) {
+            if (publicTunnel.install_url) {
+                window.open(publicTunnel.install_url, '_blank', 'noopener,noreferrer');
+            }
+            return;
+        }
+
+        setPublicTunnelAction('start');
+
+        try {
+            const response = await api.startPublicTunnel(appOrigin);
+            setPublicTunnel(response.data);
+            toast.success('Public URL started');
+        } catch (err) {
+            toast.error(err.message);
+            await loadPublicTunnelStatus({ silent: true });
+        } finally {
+            setPublicTunnelAction('');
+        }
+    };
+
+    const handleStopPublicUrl = async () => {
+        setPublicTunnelAction('stop');
+
+        try {
+            const response = await api.stopPublicTunnel();
+            setPublicTunnel(response.data);
+            toast.success('Public URL stopped');
+        } catch (err) {
+            toast.error(err.message);
+        } finally {
+            setPublicTunnelAction('');
+        }
+    };
+
     const handleClearRequests = async () => {
         if (!confirm('Clear all requests for this endpoint?')) return;
+
         try {
             await api.clearRequests(endpoint.id);
             setRequests([]);
@@ -87,13 +229,11 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
         }
     };
 
-    // Delete single request
     const handleDeleteRequest = async (id) => {
         try {
             await api.deleteRequest(id);
-            setRequests(prev => prev.filter(r => r.id !== id));
-            setTotalRequests(prev => prev - 1);
-            if (selectedRequest?.id === id) setSelectedRequest(null);
+            setRequests((current) => current.filter((request) => request.id !== id));
+            setTotalRequests((current) => Math.max(0, current - 1));
         } catch (err) {
             toast.error(err.message);
         }
@@ -104,6 +244,7 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
             const blob = await api.exportRequests(endpoint.id);
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
+
             link.href = url;
             link.download = `${endpoint.slug}-requests.csv`;
             document.body.appendChild(link);
@@ -116,37 +257,139 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
         }
     };
 
-    // Clear all filters
     const clearFilters = () => {
         setFilters({ method: '', status: '', content_type: '', date_from: '', date_to: '' });
         setSearchQuery('');
     };
 
+    const summaryCards = [
+        {
+            icon: Inbox,
+            label: 'Captured',
+            value: totalRequests,
+            note: 'requests in the current window',
+        },
+        {
+            icon: Sparkles,
+            label: 'Healthy',
+            value: `${successRate}%`,
+            note: requests.length ? '2xx and 3xx responses' : 'no samples yet',
+        },
+        {
+            icon: Gauge,
+            label: 'Avg latency',
+            value: requests.length ? `${averageLatency}ms` : '0ms',
+            note: 'based on visible requests',
+        },
+        {
+            icon: Webhook,
+            label: 'Methods',
+            value: methodCount || 0,
+            note: 'distinct HTTP verbs detected',
+        },
+    ];
+
+    const renderLocalUrlBar = () => (
+        <div className="endpoint-url-bar">
+            <span className={`endpoint-url-method ${getMethodClass('POST')}`}>LOCAL</span>
+            <span className="endpoint-url-text">{localWebhookUrl}</span>
+            <button className="copy-btn" onClick={handleCopy}>
+                {copied ? <Check className="icon" /> : <Copy className="icon" />}
+                {copied ? 'Copied' : 'Copy URL'}
+            </button>
+        </div>
+    );
+
+    const renderPublicUrlBar = () => {
+        if (!shouldShowPublicUrlBar) {
+            return null;
+        }
+
+        const showInstall = appIsLocal && publicTunnel?.installed === false && !publicUrlReady;
+        const canStop = publicTunnel?.source === 'quick_tunnel' && publicTunnel?.running;
+        const publicHint = !appIsLocal
+            ? 'This workspace is already on a public origin. Share the current URL directly.'
+            : publicUrlReady
+                ? publicTunnel?.source === 'env'
+                    ? 'Managed by PUBLIC_BASE_URL, so the public base stays stable across restarts.'
+                    : 'Temporary Cloudflare quick tunnel is active. Your localhost URL still works too.'
+                : publicTunnel?.error
+                    ? publicTunnel.error
+                    : showInstall
+                        ? 'Install cloudflared to generate a temporary public URL from localhost.'
+                        : 'Start a temporary public URL without removing your localhost webhook.';
+
+        return (
+            <>
+                <div className={`endpoint-url-bar endpoint-url-bar-public ${publicUrlReady ? 'ready' : ''}`}>
+                    <span className="endpoint-url-method endpoint-url-method-public">PUBLIC</span>
+                    <span className={`endpoint-url-text ${publicUrlReady ? '' : 'endpoint-url-text-muted'}`}>
+                        {publicUrlReady
+                            ? publicWebhookUrl
+                            : (publicTunnelLoading ? 'Checking public URL availability...' : 'No public URL yet')}
+                    </span>
+                    <div className="endpoint-url-actions">
+                        {publicUrlBusy ? (
+                            <button className="copy-btn" disabled>
+                                <RefreshCw className="icon animate-spin" />
+                                {publicTunnelAction === 'stop' ? 'Stopping' : 'Starting'}
+                            </button>
+                        ) : publicUrlReady ? (
+                            <>
+                                <button className="copy-btn" onClick={handleCopyPublic}>
+                                    {publicCopied ? <Check className="icon" /> : <Copy className="icon" />}
+                                    {publicCopied ? 'Copied' : 'Copy URL'}
+                                </button>
+                                {canStop && (
+                                    <button className="copy-btn" onClick={handleStopPublicUrl}>
+                                        Stop
+                                    </button>
+                                )}
+                            </>
+                        ) : showInstall ? (
+                            <button
+                                className="copy-btn"
+                                onClick={() => window.open(publicTunnel.install_url, '_blank', 'noopener,noreferrer')}
+                            >
+                                <ExternalLink className="icon" />
+                                Install
+                            </button>
+                        ) : (
+                            <button className="copy-btn" onClick={handleStartPublicUrl}>
+                                <Radio className="icon" />
+                                Start
+                            </button>
+                        )}
+                    </div>
+                </div>
+                <div className={`endpoint-public-hint ${publicTunnel?.error && !publicUrlReady ? 'error' : ''}`}>{publicHint}</div>
+            </>
+        );
+    };
+
     if (showConfig) {
         return (
             <div className="endpoint-view">
-                {/* Header */}
-                <div className="endpoint-header">
-                    <div className="endpoint-url-bar">
-                        <span className="endpoint-url-method method-POST" style={{ background: 'var(--accent-blue-dim)', color: 'var(--accent-blue)' }}>ANY</span>
-                        <span className="endpoint-url-text">
-                            {window.location.origin}/hook/<span>{endpoint.slug}</span>
-                        </span>
-                        <button className="copy-btn" onClick={handleCopy}>
-                            {copied ? <Check className="icon" /> : <Copy className="icon" />}
-                            {copied ? 'Copied!' : 'Copy'}
+                <div className="endpoint-header endpoint-header-compact">
+                    <div className="endpoint-header-copy">
+                        <div className="endpoint-eyebrow">
+                            <Settings size={14} />
+                            Response studio
+                        </div>
+                        <h1>{endpoint.name || endpoint.slug}</h1>
+                        <p>Shape how this endpoint responds, delays, and mirrors traffic downstream.</p>
+                        <div className="endpoint-url-stack">
+                            {renderLocalUrlBar()}
+                            {renderPublicUrlBar()}
+                        </div>
+                    </div>
+
+                    <div className="endpoint-toolbar">
+                        <button className="btn btn-secondary" onClick={() => setShowConfig(false)}>
+                            <ArrowRight className="icon rotate-180" />
+                            Back to live feed
                         </button>
                     </div>
-                </div>
-
-                <div className="top-bar">
-                    <div className="top-bar-title">
-                        <Settings className="icon" size={18} />
-                        Response Configuration
-                    </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowConfig(false)}>
-                        ← Back to Requests
-                    </button>
                 </div>
 
                 <ResponseConfig key={`${endpoint.id}:${endpoint.updated_at}`} endpoint={endpoint} onUpdate={onUpdate} />
@@ -156,87 +399,123 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
 
     return (
         <div className="endpoint-view">
-            {/* Header */}
             <div className="endpoint-header">
-                <div className="endpoint-url-bar">
-                    <span className="endpoint-url-method method-POST" style={{ background: 'var(--accent-blue-dim)', color: 'var(--accent-blue)' }}>ANY</span>
-                    <span className="endpoint-url-text">
-                        {window.location.origin}/hook/<span>{endpoint.slug}</span>
-                    </span>
-                    <button className="copy-btn" onClick={handleCopy}>
-                        {copied ? <Check className="icon" /> : <Copy className="icon" />}
-                        {copied ? 'Copied!' : 'Copy'}
-                    </button>
+                <div className="endpoint-header-copy">
+                    <div className="endpoint-eyebrow">
+                        <Radio size={14} />
+                        Live endpoint workspace
+                    </div>
+
+                    <div className="endpoint-title-row">
+                        <h1>{endpoint.name || endpoint.slug}</h1>
+                        <span className={`endpoint-state-badge ${isActive ? 'live' : 'paused'}`}>
+                            {isActive ? 'Active' : 'Paused'}
+                        </span>
+                    </div>
+
+                    <p className="endpoint-description">
+                        {endpoint.description || 'Capture inbound webhooks, inspect payloads, replay requests, and fine-tune the response layer from one live console.'}
+                    </p>
+
+                    <div className="endpoint-url-stack">
+                        {renderLocalUrlBar()}
+                        {renderPublicUrlBar()}
+                    </div>
+
+                    <div className="endpoint-meta">
+                        <div className="endpoint-meta-item">
+                            <Hash className="icon" />
+                            /hook/{endpoint.slug}
+                        </div>
+                        <div className="endpoint-meta-item">
+                            <Clock className="icon" />
+                            Created {formatTime(endpoint.created_at)}
+                        </div>
+                        <div className="endpoint-meta-item">
+                            <Activity className="icon" />
+                            {latestRequest?.created_at ? `Last event ${formatTime(latestRequest.created_at)}` : 'Waiting for first event'}
+                        </div>
+                        {endpoint.forwarding_url && (
+                            <div className="endpoint-meta-item forwarding-active">
+                                <ExternalLink className="icon" size={12} />
+                                Forwarding enabled
+                            </div>
+                        )}
+                        {activeFilterCount > 0 && (
+                            <div className="endpoint-meta-item info-chip">
+                                <SlidersHorizontal className="icon" size={12} />
+                                {activeFilterCount} active filters
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                <div className="endpoint-meta">
-                    <div className="endpoint-meta-item">
-                        <Hash className="icon" />
-                        {endpoint.name || endpoint.slug}
+                <div className="endpoint-header-summary">
+                    <div className="endpoint-summary-grid">
+                        {summaryCards.map((card) => (
+                            <div key={card.label} className="endpoint-summary-card">
+                                <div className="endpoint-summary-icon">
+                                    <card.icon size={16} />
+                                </div>
+                                <div>
+                                    <span>{card.label}</span>
+                                    <strong>{card.value}</strong>
+                                    <p>{card.note}</p>
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                    <div className="endpoint-meta-item">
-                        <Clock className="icon" />
-                        Created {formatTime(endpoint.created_at)}
-                    </div>
-                    <div className="endpoint-meta-item">
-                        <Activity className="icon" />
-                        {totalRequests} requests
-                    </div>
-                    {endpoint.forwarding_url && (
-                        <div className="endpoint-meta-item forwarding-active">
-                            <ExternalLink className="icon" size={12} />
-                            Forwarding
-                        </div>
-                    )}
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px' }}>
-                        <button
-                            className={`btn btn-sm ${showAI ? 'btn-ai-active' : 'btn-ghost'}`}
-                            onClick={() => setShowAI(!showAI)}
-                        >
+
+                    <div className="endpoint-toolbar">
+                        <button className={`btn btn-sm ${showAI ? 'btn-ai-active' : 'btn-secondary'}`} onClick={() => setShowAI((current) => !current)}>
                             <Brain className="icon" size={14} />
-                            AI
+                            AI analysis
                         </button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => setShowConfig(true)}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShowConfig(true)}>
                             <Settings className="icon" size={14} />
-                            Configure
+                            Response studio
                         </button>
-                        <button className="btn btn-ghost btn-sm" onClick={loadRequests}>
+                        <button className="btn btn-secondary btn-sm" onClick={loadRequests}>
                             <RefreshCw className="icon" size={14} />
+                            Refresh
                         </button>
-                        <button className="btn btn-ghost btn-sm" onClick={handleExportCsv}>
+                        <button className="btn btn-secondary btn-sm" onClick={handleExportCsv}>
                             <Download className="icon" size={14} />
                             Export CSV
                         </button>
                         <button className="btn btn-danger btn-sm" onClick={handleClearRequests}>
                             <Trash2 className="icon" size={14} />
-                            Clear
+                            Clear feed
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* Body: Request List + Detail/AI */}
             <div className="endpoint-body">
-                {/* Request List Panel */}
                 <div className="request-list-panel">
                     <div className="request-list-header">
-                        <div className="request-list-title">
-                            <Inbox size={16} />
-                            Incoming Requests
-                            {totalRequests > 0 && (
-                                <span className="request-list-count">{totalRequests}</span>
-                            )}
+                        <div>
+                            <div className="request-list-title">
+                                <Inbox size={16} />
+                                Incoming events
+                                {totalRequests > 0 && <span className="request-list-count">{totalRequests}</span>}
+                            </div>
+                            <div className="request-list-subtitle">
+                                {activeFilterCount || searchQuery
+                                    ? 'Filtered view of the latest webhook activity'
+                                    : 'Newest 50 requests streamed in real time'}
+                            </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+
+                        <div className="request-list-header-actions">
                             <button
                                 className={`btn-filter-toggle ${showFilters ? 'active' : ''} ${activeFilterCount > 0 ? 'has-filters' : ''}`}
-                                onClick={() => setShowFilters(!showFilters)}
+                                onClick={() => setShowFilters((current) => !current)}
                                 title="Advanced filters"
                             >
                                 <SlidersHorizontal size={14} />
-                                {activeFilterCount > 0 && (
-                                    <span className="filter-badge">{activeFilterCount}</span>
-                                )}
+                                Filters
+                                {activeFilterCount > 0 && <span className="filter-badge">{activeFilterCount}</span>}
                             </button>
                             <div className="live-indicator">
                                 <div className="live-dot" />
@@ -245,15 +524,14 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                         </div>
                     </div>
 
-                    {/* Search Bar */}
                     <div className="request-list-search">
                         <div className="search-input-wrapper">
                             <Search size={14} className="search-icon" />
                             <input
                                 type="text"
-                                placeholder="Search method, path, body..."
+                                placeholder="Search path, method, payload, or header values"
                                 value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
+                                onChange={(event) => setSearchQuery(event.target.value)}
                             />
                             {searchQuery && (
                                 <button className="search-clear" onClick={() => setSearchQuery('')}>
@@ -263,7 +541,6 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                         </div>
                     </div>
 
-                    {/* Advanced Filters Panel */}
                     {showFilters && (
                         <div className="filter-panel">
                             <div className="filter-row">
@@ -271,9 +548,9 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                                     <label>Method</label>
                                     <select
                                         value={filters.method}
-                                        onChange={e => setFilters(f => ({ ...f, method: e.target.value }))}
+                                        onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}
                                     >
-                                        <option value="">All Methods</option>
+                                        <option value="">All methods</option>
                                         <option value="GET">GET</option>
                                         <option value="POST">POST</option>
                                         <option value="PUT">PUT</option>
@@ -283,28 +560,30 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                                         <option value="OPTIONS">OPTIONS</option>
                                     </select>
                                 </div>
+
                                 <div className="filter-group">
                                     <label>Status</label>
                                     <select
                                         value={filters.status}
-                                        onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}
+                                        onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}
                                     >
-                                        <option value="">All Status</option>
-                                        <option value="200">2xx Success</option>
-                                        <option value="300">3xx Redirect</option>
-                                        <option value="400">4xx Client Error</option>
-                                        <option value="500">5xx Server Error</option>
+                                        <option value="">All status classes</option>
+                                        <option value="200">2xx success</option>
+                                        <option value="300">3xx redirect</option>
+                                        <option value="400">4xx client error</option>
+                                        <option value="500">5xx server error</option>
                                     </select>
                                 </div>
                             </div>
+
                             <div className="filter-row">
                                 <div className="filter-group">
-                                    <label>Content-Type</label>
+                                    <label>Content type</label>
                                     <select
                                         value={filters.content_type}
-                                        onChange={e => setFilters(f => ({ ...f, content_type: e.target.value }))}
+                                        onChange={(event) => setFilters((current) => ({ ...current, content_type: event.target.value }))}
                                     >
-                                        <option value="">All Types</option>
+                                        <option value="">All content types</option>
                                         <option value="json">application/json</option>
                                         <option value="xml">application/xml</option>
                                         <option value="form">form-urlencoded</option>
@@ -312,49 +591,79 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                                         <option value="text">text/plain</option>
                                     </select>
                                 </div>
+
                                 <div className="filter-group">
                                     <label>From</label>
                                     <input
                                         type="date"
                                         value={filters.date_from}
-                                        onChange={e => setFilters(f => ({ ...f, date_from: e.target.value }))}
+                                        onChange={(event) => setFilters((current) => ({ ...current, date_from: event.target.value }))}
                                     />
                                 </div>
                             </div>
-                            {activeFilterCount > 0 && (
-                                <button className="filter-clear-btn" onClick={clearFilters}>
-                                    <X size={12} />
-                                    Clear all filters
-                                </button>
-                            )}
+
+                            <div className="filter-row">
+                                <div className="filter-group">
+                                    <label>To</label>
+                                    <input
+                                        type="date"
+                                        value={filters.date_to}
+                                        onChange={(event) => setFilters((current) => ({ ...current, date_to: event.target.value }))}
+                                    />
+                                </div>
+
+                                <div className="filter-group filter-group-actions">
+                                    {activeFilterCount > 0 && (
+                                        <button className="filter-clear-btn" onClick={clearFilters}>
+                                            <X size={12} />
+                                            Clear filters
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     )}
 
-                    {/* Active filter chips */}
                     {activeFilterCount > 0 && !showFilters && (
                         <div className="filter-chips">
                             {filters.method && (
                                 <span className="filter-chip">
                                     {filters.method}
-                                    <button onClick={() => setFilters(f => ({ ...f, method: '' }))}><X size={10} /></button>
+                                    <button onClick={() => setFilters((current) => ({ ...current, method: '' }))}>
+                                        <X size={10} />
+                                    </button>
                                 </span>
                             )}
                             {filters.status && (
                                 <span className="filter-chip">
                                     {filters.status}xx
-                                    <button onClick={() => setFilters(f => ({ ...f, status: '' }))}><X size={10} /></button>
+                                    <button onClick={() => setFilters((current) => ({ ...current, status: '' }))}>
+                                        <X size={10} />
+                                    </button>
                                 </span>
                             )}
                             {filters.content_type && (
                                 <span className="filter-chip">
                                     {filters.content_type}
-                                    <button onClick={() => setFilters(f => ({ ...f, content_type: '' }))}><X size={10} /></button>
+                                    <button onClick={() => setFilters((current) => ({ ...current, content_type: '' }))}>
+                                        <X size={10} />
+                                    </button>
                                 </span>
                             )}
                             {filters.date_from && (
                                 <span className="filter-chip">
-                                    From: {filters.date_from}
-                                    <button onClick={() => setFilters(f => ({ ...f, date_from: '' }))}><X size={10} /></button>
+                                    From {filters.date_from}
+                                    <button onClick={() => setFilters((current) => ({ ...current, date_from: '' }))}>
+                                        <X size={10} />
+                                    </button>
+                                </span>
+                            )}
+                            {filters.date_to && (
+                                <span className="filter-chip">
+                                    To {filters.date_to}
+                                    <button onClick={() => setFilters((current) => ({ ...current, date_to: '' }))}>
+                                        <X size={10} />
+                                    </button>
                                 </span>
                             )}
                         </div>
@@ -362,66 +671,68 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
 
                     <div className="request-list-items">
                         {loading ? (
-                            <div className="empty-state" style={{ padding: '32px' }}>
+                            <div className="empty-state compact">
                                 <RefreshCw className="icon animate-spin" size={24} />
                                 <p>Loading requests...</p>
                             </div>
                         ) : requests.length === 0 ? (
-                            <div className="empty-state" style={{ padding: '32px' }}>
+                            <div className="empty-state compact">
                                 <Inbox className="icon" size={36} />
                                 <h3>{activeFilterCount > 0 || searchQuery ? 'No matching requests' : 'No requests yet'}</h3>
                                 <p>
                                     {activeFilterCount > 0 || searchQuery
-                                        ? 'Try adjusting your filters or search query'
-                                        : 'Send a webhook to your URL to see it appear here in real-time'
-                                    }
+                                        ? 'Try broadening the filters or clearing the search query.'
+                                        : 'Send any webhook to this endpoint and it will appear here instantly.'}
                                 </p>
-                                {(activeFilterCount > 0 || searchQuery) && (
-                                    <button className="btn btn-secondary btn-sm" style={{ marginTop: '12px' }} onClick={clearFilters}>
-                                        Clear filters
-                                    </button>
-                                )}
+                                <div className="empty-state-actions">
+                                    {(activeFilterCount > 0 || searchQuery) ? (
+                                        <button className="btn btn-secondary btn-sm" onClick={clearFilters}>
+                                            Clear filters
+                                        </button>
+                                    ) : (
+                                        <button className="btn btn-secondary btn-sm" onClick={handleCopy}>
+                                            <Copy className="icon" />
+                                            Copy endpoint URL
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         ) : (
-                            requests.map((req, index) => (
-                                <div
-                                    key={req.id}
-                                    className={`request-item ${selectedRequest?.id === req.id ? 'active' : ''} ${index === 0 ? 'new-request' : ''}`}
-                                    onClick={() => setSelectedRequest(req)}
+                            requests.map((request, index) => (
+                                <button
+                                    key={request.id}
+                                    className={`request-item ${selectedRequest?.id === request.id ? 'active' : ''} ${index === 0 ? 'new-request' : ''}`}
+                                    onClick={() => setSelectedRequest(request)}
                                 >
-                                    <span className={`request-method ${getMethodClass(req.method)}`}>
-                                        {req.method}
+                                    <span className={`request-method ${getMethodClass(request.method)}`}>
+                                        {request.method}
                                     </span>
                                     <div className="request-info">
-                                        <div className="request-path">{normalizeRequestPath(req.path)}</div>
-                                        <div className="request-time">{formatTime(req.created_at)}</div>
+                                        <div className="request-path">{normalizeRequestPath(request.path)}</div>
+                                        <div className="request-time">
+                                            {formatTime(request.created_at)}
+                                            {request.content_type ? ` • ${request.content_type}` : ''}
+                                        </div>
                                     </div>
-                                    <span className={`request-status ${getStatusClass(req.response_status)}`}>
-                                        {req.response_status}
+                                    <span className={`request-status ${getStatusClass(request.response_status)}`}>
+                                        {request.response_status}
                                     </span>
-                                </div>
+                                </button>
                             ))
                         )}
                     </div>
                 </div>
 
-                {/* Request Detail / AI Panel */}
                 <div className="request-detail">
                     {showAI ? (
-                        <AIAnalysisPanel
-                            request={selectedRequest}
-                            requests={requests}
-                        />
+                        <AIAnalysisPanel request={selectedRequest} requests={requests} />
                     ) : selectedRequest ? (
-                        <RequestDetail
-                            request={selectedRequest}
-                            onDelete={handleDeleteRequest}
-                            webhookUrl={webhookUrl}
-                        />
+                        <RequestDetail request={selectedRequest} onDelete={handleDeleteRequest} webhookUrl={requestWebhookUrl} />
                     ) : (
                         <div className="request-detail-empty">
-                            <ArrowRight className="icon" size={48} />
-                            <p>Select a request to view its details</p>
+                            <ArrowRight className="icon" size={44} />
+                            <h3>Pick an event from the left rail</h3>
+                            <p>Inspect headers, payload, query params, replay targets, and generated cURL commands here.</p>
                         </div>
                     )}
                 </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Webhook } from 'lucide-react';
+import { ArrowRight, Sparkles, Webhook, X } from 'lucide-react';
 
 export default function CreateEndpointModal({ onClose, onCreate }) {
     const [name, setName] = useState('');
@@ -7,9 +7,15 @@ export default function CreateEndpointModal({ onClose, onCreate }) {
     const [slug, setSlug] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    const endpointName = name.trim() || 'New webhook route';
+    const endpointDescription = description.trim() || 'Realtime webhook capture, replay, and response simulation.';
+    const routeSlug = slug.trim() || 'auto-generated-slug';
+    const previewUrl = `${window.location.origin}/hook/${routeSlug}`;
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
         setLoading(true);
+
         try {
             await onCreate({ name, description, slug });
         } catch {
@@ -19,77 +25,93 @@ export default function CreateEndpointModal({ onClose, onCreate }) {
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal modal-wide" onClick={(event) => event.stopPropagation()}>
                 <div className="modal-header">
-                    <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{
-                            width: 36, height: 36, borderRadius: 'var(--radius-md)',
-                            background: 'var(--accent-purple-dim)', color: 'var(--accent-purple)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center'
-                        }}>
+                    <div className="modal-title-group">
+                        <div className="modal-title-icon">
                             <Webhook size={18} />
                         </div>
-                        New Webhook Endpoint
-                    </h2>
+                        <div>
+                            <h2>Launch a new endpoint</h2>
+                            <p>Give the route a clear identity now so it stays easy to find once traffic grows.</p>
+                        </div>
+                    </div>
                     <button className="btn btn-ghost btn-icon" onClick={onClose}>
                         <X className="icon" />
                     </button>
                 </div>
 
                 <form onSubmit={handleSubmit}>
-                    <div className="modal-body">
-                        <div className="form-group">
-                            <label className="form-label">Name (optional)</label>
-                            <input
-                                type="text"
-                                className="form-input"
-                                value={name}
-                                onChange={e => setName(e.target.value)}
-                                placeholder="e.g., Stripe Payments, GitHub Actions..."
-                                autoFocus
-                            />
+                    <div className="modal-body modal-split">
+                        <div className="modal-form-column">
+                            <div className="form-group">
+                                <label className="form-label">Name</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    value={name}
+                                    onChange={(event) => setName(event.target.value)}
+                                    placeholder="Stripe payments, GitHub builds, internal queue..."
+                                    autoFocus
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Description</label>
+                                <textarea
+                                    className="form-input"
+                                    value={description}
+                                    onChange={(event) => setDescription(event.target.value)}
+                                    placeholder="Describe what should hit this endpoint and why."
+                                    rows={4}
+                                />
+                            </div>
+
+                            <div className="form-group">
+                                <label className="form-label">Custom slug</label>
+                                <input
+                                    type="text"
+                                    className="form-input mono"
+                                    value={slug}
+                                    onChange={(event) => setSlug(event.target.value.toLowerCase())}
+                                    placeholder="stripe-payments"
+                                    pattern="[a-z0-9][a-z0-9-_]{2,63}"
+                                />
+                                <div className="form-hint">Use lowercase letters, numbers, dashes, or underscores. Leave blank for an auto-generated slug.</div>
+                            </div>
                         </div>
 
-                        <div className="form-group">
-                            <label className="form-label">Description (optional)</label>
-                            <textarea
-                                className="form-input"
-                                value={description}
-                                onChange={e => setDescription(e.target.value)}
-                                placeholder="What is this endpoint for?"
-                                rows={3}
-                            />
-                        </div>
+                        <div className="modal-preview-column">
+                            <div className="modal-preview-card">
+                                <div className="modal-preview-header">
+                                    <Sparkles size={15} />
+                                    Route preview
+                                </div>
+                                <h3>{endpointName}</h3>
+                                <p>{endpointDescription}</p>
+                                <code>{previewUrl}</code>
+                            </div>
 
-                        <div className="form-group">
-                            <label className="form-label">Custom slug (optional)</label>
-                            <input
-                                type="text"
-                                className="form-input mono"
-                                value={slug}
-                                onChange={e => setSlug(e.target.value.toLowerCase())}
-                                placeholder="stripe-payments"
-                                pattern="[a-z0-9][a-z0-9-_]{2,63}"
-                            />
-                            <div className="form-hint">Use lowercase letters, numbers, dashes, or underscores.</div>
-                        </div>
-
-                        <div style={{
-                            padding: '14px',
-                            background: 'var(--bg-tertiary)',
-                            borderRadius: 'var(--radius-md)',
-                            border: '1px solid var(--border-primary)',
-                            fontSize: '0.82rem',
-                            color: 'var(--text-secondary)',
-                            lineHeight: 1.6
-                        }}>
-                            <strong style={{ color: 'var(--text-primary)' }}>💡 How it works:</strong>
-                            <ul style={{ marginTop: '6px', paddingLeft: '16px' }}>
-                                <li>A unique webhook URL will be generated for you</li>
-                                <li>Send any HTTP request (GET, POST, PUT, etc.) to that URL</li>
-                                <li>Inspect headers, body, query params in real-time</li>
-                                <li>Customize what response the endpoint returns</li>
-                            </ul>
+                            <div className="modal-preview-card">
+                                <div className="modal-preview-header">
+                                    <ArrowRight size={15} />
+                                    What happens next
+                                </div>
+                                <div className="dashboard-checklist">
+                                    <div className="dashboard-checklist-item">
+                                        <strong>Instant capture</strong>
+                                        <p>Every HTTP request sent to this URL appears in the live request feed.</p>
+                                    </div>
+                                    <div className="dashboard-checklist-item">
+                                        <strong>Response control</strong>
+                                        <p>Configure status codes, headers, body, delay, and endpoint state after creation.</p>
+                                    </div>
+                                    <div className="dashboard-checklist-item">
+                                        <strong>Replay and export</strong>
+                                        <p>Forward captured requests elsewhere and download CSV archives when needed.</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -98,7 +120,7 @@ export default function CreateEndpointModal({ onClose, onCreate }) {
                             Cancel
                         </button>
                         <button type="submit" className="btn btn-primary" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Endpoint'}
+                            {loading ? 'Creating...' : 'Create endpoint'}
                         </button>
                     </div>
                 </form>

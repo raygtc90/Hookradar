@@ -6,7 +6,7 @@ import Dashboard from './components/Dashboard';
 import EndpointView from './components/EndpointView';
 import ResponseConfig from './components/ResponseConfig';
 import Sidebar from './components/Sidebar';
-import { api, createWebSocket } from './utils/api';
+import { api, createWebSocket, isLocalHostname } from './utils/api';
 import './index.css';
 
 const defaultStats = { total_endpoints: 0, total_requests: 0, requests_today: 0 };
@@ -173,14 +173,30 @@ export default function App() {
   };
 
   const handleCreateEndpoint = async (data) => {
+    const { expose_publicly, ...endpointData } = data;
+    const appIsLocal = isLocalHostname(window.location.hostname);
+
     try {
-      const res = await api.createEndpoint(data);
+      const res = await api.createEndpoint(endpointData);
+      let publicTunnelError = null;
+
+      if (expose_publicly && appIsLocal) {
+        try {
+          await api.startPublicTunnel(window.location.origin);
+        } catch (err) {
+          publicTunnelError = err.message;
+        }
+      }
+
       setEndpoints(prev => [res.data, ...prev]);
       setStats(prev => ({ ...prev, total_endpoints: prev.total_endpoints + 1 }));
       setShowCreateModal(false);
       setSelectedEndpoint(res.data);
       setCurrentView('endpoint');
-      toast.success('Endpoint created');
+      toast.success(expose_publicly && (!appIsLocal || !publicTunnelError) ? 'Endpoint created with a public URL' : 'Endpoint created');
+      if (publicTunnelError) {
+        toast.error(`Endpoint created, but public URL could not start: ${publicTunnelError}`);
+      }
     } catch (err) {
       toast.error(err.message);
     }
@@ -270,7 +286,7 @@ export default function App() {
             background: 'var(--bg-elevated)',
             color: 'var(--text-primary)',
             border: '1px solid var(--border-primary)',
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: "'Space Grotesk', sans-serif",
             fontSize: '0.85rem',
           },
         }}

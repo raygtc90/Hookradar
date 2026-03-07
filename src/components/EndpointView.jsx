@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-    Copy, Check, Trash2, Settings, Clock, Hash,
+    Activity, Copy, Check, Download, Trash2, Settings, Clock, Hash,
     Search, Inbox, ArrowRight, RefreshCw, ExternalLink, Brain,
     X, SlidersHorizontal
 } from 'lucide-react';
@@ -36,25 +36,15 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
     // Load requests with filters
     const loadRequests = useCallback(async () => {
         try {
-            const queryParams = new URLSearchParams();
-            queryParams.set('limit', '50');
-            queryParams.set('offset', '0');
-
-            if (filters.method) queryParams.set('method', filters.method);
-            if (filters.status) queryParams.set('status', filters.status);
-            if (filters.content_type) queryParams.set('content_type', filters.content_type);
-            if (filters.date_from) queryParams.set('date_from', filters.date_from);
-            if (filters.date_to) queryParams.set('date_to', filters.date_to);
-            if (searchQuery) queryParams.set('search', searchQuery);
-
-            const res = await fetch(`/api/endpoints/${endpoint.id}/requests?${queryParams.toString()}`);
-            const data = await res.json();
-            if (data.success) {
-                setRequests(data.data);
-                setTotalRequests(data.total);
-            }
+            const res = await api.getRequests(endpoint.id, 50, 0, {
+                ...filters,
+                search: searchQuery,
+            });
+            setRequests(res.data);
+            setTotalRequests(res.total);
         } catch (err) {
             console.error('Failed to load requests:', err);
+            toast.error(err.message);
         } finally {
             setLoading(false);
         }
@@ -104,6 +94,23 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
             setRequests(prev => prev.filter(r => r.id !== id));
             setTotalRequests(prev => prev - 1);
             if (selectedRequest?.id === id) setSelectedRequest(null);
+        } catch (err) {
+            toast.error(err.message);
+        }
+    };
+
+    const handleExportCsv = async () => {
+        try {
+            const blob = await api.exportRequests(endpoint.id);
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${endpoint.slug}-requests.csv`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+            toast.success('CSV export downloaded');
         } catch (err) {
             toast.error(err.message);
         }
@@ -195,6 +202,10 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                         </button>
                         <button className="btn btn-ghost btn-sm" onClick={loadRequests}>
                             <RefreshCw className="icon" size={14} />
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={handleExportCsv}>
+                            <Download className="icon" size={14} />
+                            Export CSV
                         </button>
                         <button className="btn btn-danger btn-sm" onClick={handleClearRequests}>
                             <Trash2 className="icon" size={14} />
@@ -416,13 +427,5 @@ export default function EndpointView({ endpoint, onUpdate, newRequestTrigger }) 
                 </div>
             </div>
         </div>
-    );
-}
-
-function Activity({ className, size }) {
-    return (
-        <svg className={className} width={size || 24} height={size || 24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
-        </svg>
     );
 }

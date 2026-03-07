@@ -11,7 +11,7 @@
 
 **Live App:** [hookradar.up.railway.app](https://hookradar.up.railway.app)
 
-**Note:** The hosted Railway app is a shared public instance. For private use, run HookRadar on your own machine or server.
+**Note:** The hosted Railway app is a shared public instance with account-based isolation. For private use, run HookRadar on your own machine or server.
 
 ---
 
@@ -22,9 +22,11 @@ HookRadar is an open source tool for receiving and inspecting webhooks.
 Use it to:
 
 - generate a unique webhook URL
+- create a private account workspace on a shared deployment
 - inspect headers, query parameters, and payloads
 - monitor requests live over WebSocket
 - replay captured requests to another URL
+- export request history as CSV
 - customize response status, headers, body, and delay
 - run the app locally, on your own server, or on a hosted instance
 
@@ -37,6 +39,8 @@ If you already use tools like Webhook.site or RequestBin, HookRadar gives you a 
 | Feature | Description |
 |---------|-------------|
 | 🔗 **Unique Webhook URLs** | Generate unique endpoints to receive webhooks |
+| 🔐 **Private Workspaces** | Sign in and keep endpoints and requests isolated per account |
+| ✍️ **Custom Slugs** | Choose your own webhook path when creating an endpoint |
 | ⚡ **Real-time Dashboard** | Watch incoming requests appear instantly (WebSocket) |
 | 🔍 **Payload Inspector** | View headers, body, query params, method, IP, size |
 | 📜 **Request History** | All past requests saved & searchable |
@@ -45,6 +49,7 @@ If you already use tools like Webhook.site or RequestBin, HookRadar gives you a 
 | 🎨 **Response Customizer** | Set custom status codes, headers, body, and delays |
 | 📋 **cURL Export** | One-click cURL command generation for any request |
 | 🔎 **Advanced Filters** | Filter by method, status, content-type, date range |
+| 📦 **CSV Export** | Export request history for an endpoint as CSV |
 | 🤖 **AI Analysis** | Smart source detection, security audit, code generation |
 | 🖥️ **CLI Tool** | Full CLI — `hookradar create`, `hookradar listen` |
 | 🌙 **Modern UI** | Clean interface built for day-to-day debugging |
@@ -147,10 +152,10 @@ HookRadar can be used in three ways:
 
 ### Shared Instance vs Self-Hosted
 
-- **Shared Railway instance:** everyone gets a unique `/hook/<slug>` URL under the same base domain.
+- **Shared Railway instance:** users sign in to separate workspaces and each endpoint gets a unique `/hook/<slug>` URL under the same base domain.
 - **Self-hosted instance:** each user runs their own copy on their own laptop or server and keeps their own data.
 
-> **Important:** A public Railway deployment is a shared instance. Users will share the same app and database until authentication and per-user isolation are added.
+> **Important:** A public Railway deployment still uses one app and one database, but account isolation is now enforced at the application level. Enterprise features such as SSO and custom domains are still planned.
 
 ---
 
@@ -362,23 +367,26 @@ hookradar/
 
 ### Pro & Enterprise Features
 
-The items below describe planned features for future hosted HookRadar plans.
+The items below describe planned additions for future hosted HookRadar plans.
 
-- **Unlimited URLs**
+Already available today:
+
+- **Private accounts and workspaces**
+- **Custom webhook slugs**
+- **CSV export**
+
 - **Custom Actions** — Create advanced custom workflows
 - **Schedules and Uptime Monitors**
 - **Custom URL and Email Addresses**
-- **Secure Account Storage** — Your data is securely stored in your HookRadar account
 - **Non-Expiring URLs and Email Addresses**
 - **Unlimited Requests and Emails per URL**
-- **CSV Export**
 - **Localhost Forwarding**
 - **Email Support**
 
 ### Enterprise Features
 
 - **Custom Domain**
-- **Multi-User Support**
+- **Shared Team Workspaces**
 - **SAML 2.0 Single Sign-On**
 
 ---

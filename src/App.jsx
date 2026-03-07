@@ -1,24 +1,29 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
-import Sidebar from './components/Sidebar';
+import AuthScreen from './components/AuthScreen';
+import CreateEndpointModal from './components/CreateEndpointModal';
 import Dashboard from './components/Dashboard';
 import EndpointView from './components/EndpointView';
 import ResponseConfig from './components/ResponseConfig';
-import CreateEndpointModal from './components/CreateEndpointModal';
+import Sidebar from './components/Sidebar';
 import { api, createWebSocket } from './utils/api';
 import './index.css';
 
+const defaultStats = { total_endpoints: 0, total_requests: 0, requests_today: 0 };
+
 export default function App() {
   const [endpoints, setEndpoints] = useState([]);
-  const [stats, setStats] = useState({ total_endpoints: 0, total_requests: 0, requests_today: 0 });
+  const [stats, setStats] = useState(defaultStats);
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedEndpoint, setSelectedEndpoint] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRequestTrigger, setNewRequestTrigger] = useState(0);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [authUser, setAuthUser] = useState(null);
+  const [setupRequired, setSetupRequired] = useState(false);
   const wsRef = useRef(null);
 
-  // Theme effect
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
@@ -26,27 +31,73 @@ export default function App() {
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
+  const resetWorkspaceState = () => {
+    setEndpoints([]);
+    setStats(defaultStats);
+    setSelectedEndpoint(null);
+    setCurrentView('dashboard');
+    setShowCreateModal(false);
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([
-      api.getEndpoints(),
-      api.getStats()
-    ]).then(([endpointsRes, statsRes]) => {
-      if (cancelled) return;
-      setEndpoints(endpointsRes.data);
-      setStats(statsRes.data);
-    }).catch((err) => {
-      console.error('Failed to load data:', err);
-    });
+    api.getSession()
+      .then((session) => {
+        if (cancelled) return;
+        setAuthUser(session.data.user || null);
+        setSetupRequired(Boolean(session.data.setup_required));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Failed to load session:', err);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSessionLoading(false);
+        }
+      });
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Global WebSocket connection
   useEffect(() => {
+    if (!authUser) return;
+
+    let cancelled = false;
+
+    Promise.all([
+      api.getEndpoints(),
+      api.getStats(),
+    ]).then(([endpointsRes, statsRes]) => {
+      if (cancelled) return;
+      setEndpoints(endpointsRes.data);
+      setStats(statsRes.data);
+    }).catch((err) => {
+      if (cancelled) return;
+      console.error('Failed to load data:', err);
+      if (err.message === 'Authentication required') {
+        resetWorkspaceState();
+        setAuthUser(null);
+      } else {
+        toast.error(err.message);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser) {
+      wsRef.current?.close();
+      wsRef.current = null;
+      return undefined;
+    }
+
     let reconnectTimer = null;
     let disposed = false;
 
@@ -58,26 +109,23 @@ export default function App() {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'new_request') {
-            // Update endpoints list
             setEndpoints(prev => prev.map(ep => {
               if (ep.id === data.endpoint_id) {
                 return {
                   ...ep,
                   request_count: (ep.request_count || 0) + 1,
-                  last_request_at: data.request?.created_at
+                  last_request_at: data.request?.created_at,
                 };
               }
               return ep;
             }));
 
-            // Update stats
             setStats(prev => ({
               ...prev,
               total_requests: prev.total_requests + 1,
-              requests_today: prev.requests_today + 1
+              requests_today: prev.requests_today + 1,
             }));
 
-            // Trigger request list refresh
             setNewRequestTrigger(prev => prev + 1);
           }
         } catch (err) {
@@ -106,9 +154,24 @@ export default function App() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, []);
+  }, [authUser]);
 
-  // Handle endpoint creation
+  const handleAuthSuccess = (user) => {
+    setAuthUser(user);
+    setSetupRequired(false);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+      resetWorkspaceState();
+      setAuthUser(null);
+      toast.success('Signed out');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const handleCreateEndpoint = async (data) => {
     try {
       const res = await api.createEndpoint(data);
@@ -117,18 +180,17 @@ export default function App() {
       setShowCreateModal(false);
       setSelectedEndpoint(res.data);
       setCurrentView('endpoint');
-      toast.success('Endpoint created!');
+      toast.success('Endpoint created');
     } catch (err) {
       toast.error(err.message);
     }
   };
 
-  // Handle endpoint deletion
   const handleDeleteEndpoint = async (id) => {
     try {
       await api.deleteEndpoint(id);
       setEndpoints(prev => prev.filter(ep => ep.id !== id));
-      setStats(prev => ({ ...prev, total_endpoints: prev.total_endpoints - 1 }));
+      setStats(prev => ({ ...prev, total_endpoints: Math.max(0, prev.total_endpoints - 1) }));
       if (selectedEndpoint?.id === id) {
         setSelectedEndpoint(null);
         setCurrentView('dashboard');
@@ -139,7 +201,6 @@ export default function App() {
     }
   };
 
-  // Handle endpoint update
   const handleUpdateEndpoint = async (id, data) => {
     try {
       const res = await api.updateEndpoint(id, data);
@@ -151,7 +212,6 @@ export default function App() {
     }
   };
 
-  // Navigate to endpoint
   const handleSelectEndpoint = (endpoint) => {
     setSelectedEndpoint(endpoint);
     setCurrentView('endpoint');
@@ -187,7 +247,15 @@ export default function App() {
           />
         );
       default:
-        return <Dashboard stats={stats} endpoints={endpoints} onCreateEndpoint={() => setShowCreateModal(true)} onSelectEndpoint={handleSelectEndpoint} onDeleteEndpoint={handleDeleteEndpoint} />;
+        return (
+          <Dashboard
+            stats={stats}
+            endpoints={endpoints}
+            onCreateEndpoint={() => setShowCreateModal(true)}
+            onSelectEndpoint={handleSelectEndpoint}
+            onDeleteEndpoint={handleDeleteEndpoint}
+          />
+        );
     }
   };
 
@@ -203,34 +271,54 @@ export default function App() {
             color: 'var(--text-primary)',
             border: '1px solid var(--border-primary)',
             fontFamily: "'Inter', sans-serif",
-            fontSize: '0.85rem'
+            fontSize: '0.85rem',
           },
         }}
       />
 
-      <div className="app-layout">
-        <Sidebar
-          endpoints={endpoints}
-          selectedEndpoint={selectedEndpoint}
-          currentView={currentView}
-          stats={stats}
+      {sessionLoading ? (
+        <div className="auth-loading-screen">
+          <div className="auth-loading-card">
+            <div className="spinner" />
+            <p>Loading workspace...</p>
+          </div>
+        </div>
+      ) : !authUser ? (
+        <AuthScreen
           theme={theme}
           toggleTheme={toggleTheme}
-          onNavigate={setCurrentView}
-          onSelectEndpoint={handleSelectEndpoint}
-          onCreateEndpoint={() => setShowCreateModal(true)}
+          setupRequired={setupRequired}
+          onAuthSuccess={handleAuthSuccess}
         />
+      ) : (
+        <>
+          <div className="app-layout">
+            <Sidebar
+              currentUser={authUser}
+              endpoints={endpoints}
+              selectedEndpoint={selectedEndpoint}
+              currentView={currentView}
+              stats={stats}
+              theme={theme}
+              toggleTheme={toggleTheme}
+              onNavigate={setCurrentView}
+              onSelectEndpoint={handleSelectEndpoint}
+              onCreateEndpoint={() => setShowCreateModal(true)}
+              onLogout={handleLogout}
+            />
 
-        <main className="main-content">
-          {renderContent()}
-        </main>
-      </div>
+            <main className="main-content">
+              {renderContent()}
+            </main>
+          </div>
 
-      {showCreateModal && (
-        <CreateEndpointModal
-          onClose={() => setShowCreateModal(false)}
-          onCreate={handleCreateEndpoint}
-        />
+          {showCreateModal && (
+            <CreateEndpointModal
+              onClose={() => setShowCreateModal(false)}
+              onCreate={handleCreateEndpoint}
+            />
+          )}
+        </>
       )}
     </>
   );

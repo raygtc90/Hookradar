@@ -4,13 +4,14 @@ import { X, Webhook } from 'lucide-react';
 export default function CreateEndpointModal({ onClose, onCreate }) {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
+    const [slug, setSlug] = useState('');
     const [loading, setLoading] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
         try {
-            await onCreate({ name, description });
+            await onCreate({ name, description, slug });
         } catch {
             setLoading(false);
         }
@@ -58,6 +59,19 @@ export default function CreateEndpointModal({ onClose, onCreate }) {
                                 placeholder="What is this endpoint for?"
                                 rows={3}
                             />
+                        </div>
+
+                        <div className="form-group">
+                            <label className="form-label">Custom slug (optional)</label>
+                            <input
+                                type="text"
+                                className="form-input mono"
+                                value={slug}
+                                onChange={e => setSlug(e.target.value.toLowerCase())}
+                                placeholder="stripe-payments"
+                                pattern="[a-z0-9][a-z0-9-_]{2,63}"
+                            />
+                            <div className="form-hint">Use lowercase letters, numbers, dashes, or underscores.</div>
                         </div>
 
                         <div style={{

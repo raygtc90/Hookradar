@@ -19,6 +19,12 @@ async function request(url, options = {}) {
 }
 
 export const api = {
+    // Auth
+    getSession: () => request('/auth/session'),
+    signup: (data) => request('/auth/signup', { method: 'POST', body: JSON.stringify(data) }),
+    login: (data) => request('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+    logout: () => request('/auth/logout', { method: 'POST' }),
+
     // Endpoints
     getEndpoints: () => request('/endpoints'),
     createEndpoint: (data) => request('/endpoints', { method: 'POST', body: JSON.stringify(data) }),
@@ -43,6 +49,22 @@ export const api = {
 
     // Stats
     getStats: () => request('/stats'),
+
+    exportRequests: async (endpointId) => {
+        const response = await fetch(`${BASE_URL}/endpoints/${endpointId}/export.csv`);
+        if (!response.ok) {
+            let errorMessage = 'Failed to export CSV';
+            try {
+                const data = await response.json();
+                errorMessage = data.error || errorMessage;
+            } catch {
+                // Ignore JSON parsing failures for CSV responses.
+            }
+            throw new Error(errorMessage);
+        }
+
+        return response.blob();
+    },
 };
 
 // WebSocket connection

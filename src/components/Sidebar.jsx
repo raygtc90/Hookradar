@@ -1,6 +1,18 @@
-import { Radio, LayoutDashboard, Plus, Settings, Webhook, Activity, Moon, Sun } from 'lucide-react';
+import { LayoutDashboard, LogOut, Moon, Plus, Sun } from 'lucide-react';
 
-export default function Sidebar({ endpoints, selectedEndpoint, currentView, stats, theme, toggleTheme, onNavigate, onSelectEndpoint, onCreateEndpoint }) {
+export default function Sidebar({
+    currentUser,
+    endpoints,
+    selectedEndpoint,
+    currentView,
+    stats,
+    theme,
+    toggleTheme,
+    onNavigate,
+    onSelectEndpoint,
+    onCreateEndpoint,
+    onLogout,
+}) {
     return (
         <aside className="sidebar">
             <div className="sidebar-header">
@@ -10,7 +22,7 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
                     </div>
                     <div>
                         <div className="sidebar-logo-text">HookRadar</div>
-                        <span className="sidebar-logo-badge">Open Source</span>
+                        <span className="sidebar-logo-badge">Workspace</span>
                     </div>
                 </div>
             </div>
@@ -26,10 +38,7 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
                     <span>Dashboard</span>
                 </button>
 
-                <button
-                    className="sidebar-link"
-                    onClick={onCreateEndpoint}
-                >
+                <button className="sidebar-link" onClick={onCreateEndpoint}>
                     <Plus className="icon" />
                     <span>New Endpoint</span>
                 </button>
@@ -41,7 +50,7 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
 
                 <div className="sidebar-endpoints">
                     {endpoints.length === 0 ? (
-                        <div style={{ padding: '12px', fontSize: '0.78rem', color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                        <div className="sidebar-empty-copy">
                             No endpoints yet
                         </div>
                     ) : (
@@ -61,7 +70,14 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
                     )}
                 </div>
 
-                <div style={{ marginTop: 'auto', paddingTop: '16px' }}>
+                <div className="sidebar-account-card">
+                    <div className="sidebar-account-label">Signed in as</div>
+                    <div className="sidebar-account-name">{currentUser.name || currentUser.email}</div>
+                    <div className="sidebar-account-email">{currentUser.email}</div>
+                    <div className="sidebar-account-plan">{currentUser.plan || 'free'} plan</div>
+                </div>
+
+                <div className="sidebar-account-actions">
                     <button
                         className="sidebar-link"
                         onClick={toggleTheme}
@@ -69,6 +85,11 @@ export default function Sidebar({ endpoints, selectedEndpoint, currentView, stat
                     >
                         {theme === 'dark' ? <Sun className="icon" /> : <Moon className="icon" />}
                         <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+                    </button>
+
+                    <button className="sidebar-link" onClick={onLogout}>
+                        <LogOut className="icon" />
+                        <span>Sign Out</span>
                     </button>
                 </div>
             </nav>

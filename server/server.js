@@ -1,16 +1,31 @@
-import express from 'express';
 import cors from 'cors';
-import { WebSocketServer } from 'ws';
+import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
 import { v4 as uuidv4 } from 'uuid';
+import { WebSocketServer } from 'ws';
+import {
+    createSessionToken,
+    formatSqliteDate,
+    getSessionExpiryDate,
+    hashPassword,
+    hashSessionToken,
+    parseCookies,
+    publicUser,
+    serializeExpiredSessionCookie,
+    serializeSessionCookie,
+    verifyPassword,
+} from './auth.js';
 import { db, stmts } from './database.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const LEGACY_GLOBAL_CHANNEL = '__legacy__';
+
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(cors());
@@ -19,101 +34,325 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.text({ limit: '10mb', type: 'text/*' }));
 app.use(express.raw({ limit: '10mb', type: ['application/octet-stream', 'application/xml', 'application/x-www-form-urlencoded'] }));
 
+function isAuthEnabled() {
+    return stmts.countUsers.get().count > 0;
+}
+
+function getSessionUserFromCookieHeader(cookieHeader) {
+    const token = parseCookies(cookieHeader).hookradar_session;
+    if (!token) return null;
+
+    stmts.deleteExpiredSessions.run();
+    const session = stmts.getSessionByTokenHash.get(hashSessionToken(token));
+    return session ? publicUser(session) : null;
+}
+
+function getRequestSessionToken(req) {
+    return parseCookies(req.headers.cookie).hookradar_session;
+}
+
+function requireAccess(req, res, next) {
+    if (!req.authEnabled || req.user) {
+        return next();
+    }
+
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+}
+
+function getEndpointForRequest(req, endpointId) {
+    if (req.authEnabled) {
+        return stmts.getEndpointByOwner.get(endpointId, req.user.id);
+    }
+
+    return stmts.getEndpoint.get(endpointId);
+}
+
+function getRequestForRequest(req, requestId) {
+    if (req.authEnabled) {
+        return stmts.getRequestByOwner.get(requestId, req.user.id);
+    }
+
+    return stmts.getRequest.get(requestId);
+}
+
+function normalizeSlug(input) {
+    return (input || '').trim().toLowerCase();
+}
+
+function isValidSlug(slug) {
+    return /^[a-z0-9][a-z0-9-_]{2,63}$/.test(slug);
+}
+
+function escapeCsvValue(value) {
+    const str = value == null ? '' : String(value);
+    return `"${str.replaceAll('"', '""')}"`;
+}
+
+function requestsToCsv(rows) {
+    const headers = [
+        'created_at',
+        'method',
+        'path',
+        'response_status',
+        'response_time',
+        'content_type',
+        'size',
+        'ip_address',
+        'user_agent',
+        'query_params',
+        'headers',
+        'body',
+    ];
+
+    const lines = [
+        headers.join(','),
+        ...rows.map(row => headers.map(key => escapeCsvValue(row[key])).join(',')),
+    ];
+
+    return lines.join('\n');
+}
+
+function setSessionCookie(res, req, token) {
+    res.setHeader('Set-Cookie', serializeSessionCookie(token, req));
+}
+
+function clearSessionCookie(res, req) {
+    res.setHeader('Set-Cookie', serializeExpiredSessionCookie(req));
+}
+
+app.use((req, res, next) => {
+    req.authEnabled = isAuthEnabled();
+    req.user = req.authEnabled ? getSessionUserFromCookieHeader(req.headers.cookie) : null;
+    next();
+});
+
 // Create HTTP server
 const server = http.createServer(app);
 
 // WebSocket server
 const wss = new WebSocketServer({ server, path: '/ws' });
+const endpointClients = new Map();
+const globalClients = new Map();
 
-// Track connected clients by endpoint
-const clients = new Map();
-
-wss.on('connection', (ws, req) => {
-    const url = new URL(req.url, `http://localhost:${PORT}`);
-    const endpointId = url.searchParams.get('endpointId');
-
-    if (endpointId) {
-        if (!clients.has(endpointId)) {
-            clients.set(endpointId, new Set());
-        }
-        clients.get(endpointId).add(ws);
-
-        ws.on('close', () => {
-            const clientSet = clients.get(endpointId);
-            if (clientSet) {
-                clientSet.delete(ws);
-                if (clientSet.size === 0) {
-                    clients.delete(endpointId);
-                }
-            }
-        });
-        return;
+function addClient(map, key, ws) {
+    if (!map.has(key)) {
+        map.set(key, new Set());
     }
+    map.get(key).add(ws);
+}
 
-    // Track listeners that want every endpoint event.
-    if (!clients.has('__global__')) {
-        clients.set('__global__', new Set());
-    }
-    clients.get('__global__').add(ws);
-
-    ws.on('close', () => {
-        const globalSet = clients.get('__global__');
-        if (globalSet) {
-            globalSet.delete(ws);
-            if (globalSet.size === 0) {
-                clients.delete('__global__');
-            }
-        }
-    });
-});
-
-function broadcastToEndpoint(endpointId, data) {
-    const message = JSON.stringify(data);
-
-    // Send to endpoint-specific listeners
-    const endpointClients = clients.get(endpointId);
-    if (endpointClients) {
-        endpointClients.forEach(ws => {
-            if (ws.readyState === ws.OPEN) {
-                ws.send(message);
-            }
-        });
-    }
-
-    // Send to global listeners
-    const globalClients = clients.get('__global__');
-    if (globalClients) {
-        globalClients.forEach(ws => {
-            if (ws.readyState === ws.OPEN) {
-                ws.send(message);
-            }
-        });
+function removeClient(map, key, ws) {
+    const bucket = map.get(key);
+    if (!bucket) return;
+    bucket.delete(ws);
+    if (bucket.size === 0) {
+        map.delete(key);
     }
 }
 
+function sendToBucket(bucket, message) {
+    if (!bucket) return;
+    bucket.forEach(ws => {
+        if (ws.readyState === ws.OPEN) {
+            ws.send(message);
+        }
+    });
+}
+
+function broadcastToEndpoint(endpoint, data) {
+    const message = JSON.stringify(data);
+    sendToBucket(endpointClients.get(endpoint.id), message);
+
+    const globalKey = endpoint.owner_user_id || LEGACY_GLOBAL_CHANNEL;
+    sendToBucket(globalClients.get(globalKey), message);
+}
+
+wss.on('connection', (ws, req) => {
+    const authEnabled = isAuthEnabled();
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const endpointId = url.searchParams.get('endpointId');
+    const user = authEnabled ? getSessionUserFromCookieHeader(req.headers.cookie) : null;
+
+    if (authEnabled && !user) {
+        ws.close(1008, 'Authentication required');
+        return;
+    }
+
+    if (endpointId) {
+        if (authEnabled) {
+            const endpoint = stmts.getEndpointByOwner.get(endpointId, user.id);
+            if (!endpoint) {
+                ws.close(1008, 'Endpoint not found');
+                return;
+            }
+        }
+
+        addClient(endpointClients, endpointId, ws);
+        ws.on('close', () => removeClient(endpointClients, endpointId, ws));
+        return;
+    }
+
+    const globalKey = authEnabled ? user.id : LEGACY_GLOBAL_CHANNEL;
+    addClient(globalClients, globalKey, ws);
+    ws.on('close', () => removeClient(globalClients, globalKey, ws));
+});
+
+// ==================== Auth Routes ====================
+
+app.get('/api/auth/session', (req, res) => {
+    res.json({
+        success: true,
+        data: {
+            authenticated: Boolean(req.user),
+            auth_enabled: req.authEnabled,
+            setup_required: !req.authEnabled,
+            user: req.user,
+        },
+    });
+});
+
+app.post('/api/auth/signup', (req, res) => {
+    try {
+        const name = (req.body.name || '').trim();
+        const email = (req.body.email || '').trim().toLowerCase();
+        const password = req.body.password || '';
+        const existingUserCount = stmts.countUsers.get().count;
+
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({ success: false, error: 'Enter a valid email address' });
+        }
+
+        if (password.length < 8) {
+            return res.status(400).json({ success: false, error: 'Password must be at least 8 characters' });
+        }
+
+        if (stmts.getUserByEmail.get(email)) {
+            return res.status(409).json({ success: false, error: 'An account with this email already exists' });
+        }
+
+        const userId = uuidv4();
+        const passwordHash = hashPassword(password);
+
+        stmts.createUser.run(userId, email, name, passwordHash, 'free');
+
+        if (existingUserCount === 0) {
+            stmts.adoptUnownedEndpoints.run(userId);
+        }
+
+        const sessionToken = createSessionToken();
+        stmts.createSession.run(
+            uuidv4(),
+            userId,
+            hashSessionToken(sessionToken),
+            formatSqliteDate(getSessionExpiryDate()),
+        );
+
+        setSessionCookie(res, req, sessionToken);
+
+        const user = stmts.getUserById.get(userId);
+        res.status(201).json({ success: true, data: { user: publicUser(user) } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/auth/login', (req, res) => {
+    try {
+        if (!isAuthEnabled()) {
+            return res.status(400).json({ success: false, error: 'Create the first account before logging in' });
+        }
+
+        const email = (req.body.email || '').trim().toLowerCase();
+        const password = req.body.password || '';
+        const user = stmts.getUserByEmail.get(email);
+
+        if (!user || !verifyPassword(password, user.password_hash)) {
+            return res.status(401).json({ success: false, error: 'Invalid email or password' });
+        }
+
+        const sessionToken = createSessionToken();
+        stmts.createSession.run(
+            uuidv4(),
+            user.id,
+            hashSessionToken(sessionToken),
+            formatSqliteDate(getSessionExpiryDate()),
+        );
+
+        setSessionCookie(res, req, sessionToken);
+
+        res.json({ success: true, data: { user: publicUser(user) } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    try {
+        const token = getRequestSessionToken(req);
+        if (token) {
+            stmts.deleteSessionByTokenHash.run(hashSessionToken(token));
+        }
+        clearSessionCookie(res, req);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ==================== API Routes ====================
 
-// Get all endpoints
-app.get('/api/endpoints', (req, res) => {
+app.get('/api/endpoints', requireAccess, (req, res) => {
     try {
-        const endpoints = stmts.getAllEndpoints.all();
+        const endpoints = req.authEnabled
+            ? stmts.getAllEndpointsByOwner.all(req.user.id)
+            : stmts.getAllEndpoints.all();
+
         res.json({ success: true, data: endpoints });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Create a new endpoint
-app.post('/api/endpoints', (req, res) => {
+app.post('/api/endpoints', requireAccess, (req, res) => {
     try {
+        const requestedSlug = normalizeSlug(req.body.slug);
+        const slug = requestedSlug || nanoid(10).toLowerCase();
         const id = uuidv4();
-        const slug = nanoid(10);
-        const { name = '', description = '', response_status = 200, response_headers, response_body, response_delay = 0 } = req.body;
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+        const {
+            name = '',
+            description = '',
+            response_status = 200,
+            response_headers,
+            response_body,
+            response_delay = 0,
+        } = req.body;
+
+        if (requestedSlug && !isValidSlug(requestedSlug)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Slug must be 3-64 characters using lowercase letters, numbers, dashes, or underscores',
+            });
+        }
+
+        if (stmts.getEndpointBySlug.get(slug)) {
+            return res.status(409).json({ success: false, error: 'This slug is already in use' });
+        }
 
         const headers = response_headers || JSON.stringify({ 'Content-Type': 'application/json' });
         const body = response_body || JSON.stringify({ success: true, message: 'Webhook received by HookRadar' });
 
-        stmts.createEndpoint.run(id, slug, name, description, response_status, headers, body, response_delay);
+        stmts.createEndpoint.run(
+            id,
+            ownerUserId,
+            slug,
+            name,
+            description,
+            response_status,
+            headers,
+            body,
+            response_delay,
+        );
 
         const endpoint = stmts.getEndpoint.get(id);
         res.status(201).json({ success: true, data: endpoint });
@@ -122,22 +361,24 @@ app.post('/api/endpoints', (req, res) => {
     }
 });
 
-// Get a single endpoint
-app.get('/api/endpoints/:id', (req, res) => {
+app.get('/api/endpoints/:id', requireAccess, (req, res) => {
     try {
-        const endpoint = stmts.getEndpoint.get(req.params.id);
-        if (!endpoint) return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
         res.json({ success: true, data: endpoint });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Update endpoint
-app.put('/api/endpoints/:id', (req, res) => {
+app.put('/api/endpoints/:id', requireAccess, (req, res) => {
     try {
-        const existing = stmts.getEndpoint.get(req.params.id);
-        if (!existing) return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        const existing = getEndpointForRequest(req, req.params.id);
+        if (!existing) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
 
         const {
             name = existing.name,
@@ -147,39 +388,77 @@ app.put('/api/endpoints/:id', (req, res) => {
             response_body = existing.response_body,
             response_delay = existing.response_delay,
             is_active = existing.is_active,
-            forwarding_url = existing.forwarding_url || ''
+            forwarding_url = existing.forwarding_url || '',
         } = req.body;
 
-        stmts.updateEndpoint.run(name, description, response_status, response_headers, response_body, response_delay, is_active, forwarding_url, req.params.id);
+        if (req.authEnabled) {
+            stmts.updateEndpointByOwner.run(
+                name,
+                description,
+                response_status,
+                response_headers,
+                response_body,
+                response_delay,
+                is_active,
+                forwarding_url,
+                req.params.id,
+                req.user.id,
+            );
+        } else {
+            stmts.updateEndpoint.run(
+                name,
+                description,
+                response_status,
+                response_headers,
+                response_body,
+                response_delay,
+                is_active,
+                forwarding_url,
+                req.params.id,
+            );
+        }
 
-        const updated = stmts.getEndpoint.get(req.params.id);
+        const updated = getEndpointForRequest(req, req.params.id);
         res.json({ success: true, data: updated });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Delete endpoint
-app.delete('/api/endpoints/:id', (req, res) => {
+app.delete('/api/endpoints/:id', requireAccess, (req, res) => {
     try {
-        stmts.deleteRequestsByEndpoint.run(req.params.id);
-        stmts.deleteEndpoint.run(req.params.id);
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        if (req.authEnabled) {
+            stmts.deleteRequestsByEndpointByOwner.run(req.params.id, req.user.id);
+            stmts.deleteEndpointByOwner.run(req.params.id, req.user.id);
+        } else {
+            stmts.deleteRequestsByEndpoint.run(req.params.id);
+            stmts.deleteEndpoint.run(req.params.id);
+        }
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Get requests for an endpoint (with advanced filtering)
-app.get('/api/endpoints/:id/requests', (req, res) => {
+app.get('/api/endpoints/:id/requests', requireAccess, (req, res) => {
     try {
-        const limit = parseInt(req.query.limit) || 50;
-        const offset = parseInt(req.query.offset) || 0;
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const limit = parseInt(req.query.limit, 10) || 50;
+        const offset = parseInt(req.query.offset, 10) || 0;
         const { method, status, content_type, date_from, date_to, search } = req.query;
 
-        // Build dynamic SQL for filtering
-        let conditions = ['endpoint_id = ?'];
-        let params = [req.params.id];
+        const conditions = ['endpoint_id = ?'];
+        const params = [req.params.id];
 
         if (method) {
             conditions.push('method = ?');
@@ -187,7 +466,7 @@ app.get('/api/endpoints/:id/requests', (req, res) => {
         }
 
         if (status) {
-            const statusNum = parseInt(status);
+            const statusNum = parseInt(status, 10);
             if (statusNum >= 100 && statusNum < 200) {
                 conditions.push('response_status >= 100 AND response_status < 200');
             } else if (statusNum >= 200 && statusNum < 300) {
@@ -207,7 +486,7 @@ app.get('/api/endpoints/:id/requests', (req, res) => {
         }
 
         if (date_from) {
-            conditions.push("created_at >= ?");
+            conditions.push('created_at >= ?');
             params.push(date_from);
         }
 
@@ -215,7 +494,7 @@ app.get('/api/endpoints/:id/requests', (req, res) => {
             if (/^\d{4}-\d{2}-\d{2}$/.test(date_to)) {
                 conditions.push("created_at < datetime(?, '+1 day')");
             } else {
-                conditions.push("created_at <= ?");
+                conditions.push('created_at <= ?');
             }
             params.push(date_to);
         }
@@ -238,61 +517,101 @@ app.get('/api/endpoints/:id/requests', (req, res) => {
             data: requests,
             total: countResult.count,
             limit,
-            offset
+            offset,
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Delete a specific request
-app.delete('/api/requests/:id', (req, res) => {
+app.get('/api/endpoints/:id/export.csv', requireAccess, (req, res) => {
     try {
-        stmts.deleteRequest.run(req.params.id);
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const rows = stmts.getRequestsByEndpointForExport.all(req.params.id);
+        const csv = requestsToCsv(rows);
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${endpoint.slug}-requests.csv"`);
+        res.send(csv);
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/requests/:id', requireAccess, (req, res) => {
+    try {
+        const request = getRequestForRequest(req, req.params.id);
+        if (!request) {
+            return res.status(404).json({ success: false, error: 'Request not found' });
+        }
+
+        if (req.authEnabled) {
+            stmts.deleteRequestByOwner.run(req.params.id, req.user.id);
+        } else {
+            stmts.deleteRequest.run(req.params.id);
+        }
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Clear all requests for an endpoint
-app.delete('/api/endpoints/:id/requests', (req, res) => {
+app.delete('/api/endpoints/:id/requests', requireAccess, (req, res) => {
     try {
-        stmts.deleteRequestsByEndpoint.run(req.params.id);
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        if (req.authEnabled) {
+            stmts.deleteRequestsByEndpointByOwner.run(req.params.id, req.user.id);
+        } else {
+            stmts.deleteRequestsByEndpoint.run(req.params.id);
+        }
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Get stats
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', requireAccess, (req, res) => {
     try {
-        const stats = stmts.getStats.get();
+        const stats = req.authEnabled
+            ? stmts.getStatsByOwner.get(req.user.id, req.user.id, req.user.id)
+            : stmts.getStats.get();
+
         res.json({ success: true, data: stats });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Forward/Replay request
-app.post('/api/requests/:id/replay', async (req, res) => {
+app.post('/api/requests/:id/replay', requireAccess, async (req, res) => {
     try {
-        const request = stmts.getRequest.get(req.params.id);
-        if (!request) return res.status(404).json({ success: false, error: 'Request not found' });
+        const request = getRequestForRequest(req, req.params.id);
+        if (!request) {
+            return res.status(404).json({ success: false, error: 'Request not found' });
+        }
 
         const { target_url } = req.body;
-        if (!target_url) return res.status(400).json({ success: false, error: 'target_url is required' });
+        if (!target_url) {
+            return res.status(400).json({ success: false, error: 'target_url is required' });
+        }
 
         const headers = JSON.parse(request.headers);
-        // Remove host-specific headers
         delete headers.host;
         delete headers['content-length'];
 
         const response = await fetch(target_url, {
             method: request.method,
-            headers: headers,
-            body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body
+            headers,
+            body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
         });
 
         const responseBody = await response.text();
@@ -302,30 +621,35 @@ app.post('/api/requests/:id/replay', async (req, res) => {
             data: {
                 status: response.status,
                 headers: Object.fromEntries(response.headers.entries()),
-                body: responseBody
-            }
+                body: responseBody,
+            },
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Analyze a request (AI-powered)
-app.get('/api/requests/:id/analyze', (req, res) => {
+app.get('/api/requests/:id/analyze', requireAccess, (req, res) => {
     try {
-        const request = stmts.getRequest.get(req.params.id);
-        if (!request) return res.status(404).json({ success: false, error: 'Request not found' });
-        // Return the request data for frontend analysis
+        const request = getRequestForRequest(req, req.params.id);
+        if (!request) {
+            return res.status(404).json({ success: false, error: 'Request not found' });
+        }
+
         res.json({ success: true, data: request });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Get pattern analysis for an endpoint
-app.get('/api/endpoints/:id/analysis', (req, res) => {
+app.get('/api/endpoints/:id/analysis', requireAccess, (req, res) => {
     try {
-        const limit = parseInt(req.query.limit) || 100;
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const limit = parseInt(req.query.limit, 10) || 100;
         const requests = stmts.getRequestsByEndpoint.all(req.params.id, limit, 0);
         res.json({ success: true, data: requests });
     } catch (err) {
@@ -349,9 +673,8 @@ const webhookHandler = async (req, res) => {
         }
 
         const startTime = Date.now();
-
-        // Parse body
         let body = '';
+
         if (req.body) {
             if (Buffer.isBuffer(req.body)) {
                 body = req.body.toString('utf-8');
@@ -362,14 +685,11 @@ const webhookHandler = async (req, res) => {
             }
         }
 
-        // Simulate response delay
         if (endpoint.response_delay > 0) {
             await new Promise(resolve => setTimeout(resolve, endpoint.response_delay));
         }
 
         const responseTime = Date.now() - startTime;
-
-        // Store the request
         const requestId = uuidv4();
         const headers = JSON.stringify(req.headers);
         const queryParams = JSON.stringify(req.query);
@@ -379,25 +699,33 @@ const webhookHandler = async (req, res) => {
         const size = Buffer.byteLength(body, 'utf8');
 
         stmts.createRequest.run(
-            requestId, endpoint.id, req.method, subpath, headers, queryParams,
-            body, contentType, ipAddress, userAgent, size, endpoint.response_status, responseTime
+            requestId,
+            endpoint.id,
+            req.method,
+            subpath,
+            headers,
+            queryParams,
+            body,
+            contentType,
+            ipAddress,
+            userAgent,
+            size,
+            endpoint.response_status,
+            responseTime,
         );
 
-        // Get the saved request
         const savedRequest = stmts.getRequest.get(requestId);
 
-        // Broadcast to WebSocket clients
-        broadcastToEndpoint(endpoint.id, {
+        broadcastToEndpoint(endpoint, {
             type: 'new_request',
             endpoint_id: endpoint.id,
-            request: savedRequest
+            request: savedRequest,
         });
 
-        // Auto-forward to configured URL (fire-and-forget)
         if (endpoint.forwarding_url) {
             try {
                 const forwardHeaders = { ...req.headers };
-                delete forwardHeaders['host'];
+                delete forwardHeaders.host;
                 delete forwardHeaders['content-length'];
 
                 fetch(endpoint.forwarding_url, {
@@ -406,20 +734,19 @@ const webhookHandler = async (req, res) => {
                     body: ['GET', 'HEAD'].includes(req.method) ? undefined : body,
                 }).then(fwdRes => {
                     console.log(`📤 Forwarded ${req.method} to ${endpoint.forwarding_url} → ${fwdRes.status}`);
-                    // Broadcast forwarding result
-                    broadcastToEndpoint(endpoint.id, {
+                    broadcastToEndpoint(endpoint, {
                         type: 'forward_result',
                         request_id: requestId,
                         status: fwdRes.status,
-                        url: endpoint.forwarding_url
+                        url: endpoint.forwarding_url,
                     });
                 }).catch(fwdErr => {
                     console.error(`📤 Forward failed to ${endpoint.forwarding_url}:`, fwdErr.message);
-                    broadcastToEndpoint(endpoint.id, {
+                    broadcastToEndpoint(endpoint, {
                         type: 'forward_error',
                         request_id: requestId,
                         error: fwdErr.message,
-                        url: endpoint.forwarding_url
+                        url: endpoint.forwarding_url,
                     });
                 });
             } catch (fwdErr) {
@@ -427,7 +754,6 @@ const webhookHandler = async (req, res) => {
             }
         }
 
-        // Send configured response
         const responseHeaders = JSON.parse(endpoint.response_headers);
         Object.entries(responseHeaders).forEach(([key, value]) => {
             res.setHeader(key, value);
@@ -440,7 +766,6 @@ const webhookHandler = async (req, res) => {
     }
 };
 
-// Catch all HTTP methods for webhook endpoints
 app.all('/hook/:slug', webhookHandler);
 app.all('/hook/:slug/*', webhookHandler);
 
@@ -456,7 +781,6 @@ if (fs.existsSync(distPath)) {
     console.log('📦 Serving static frontend from /dist');
 }
 
-// Start server
 server.listen(PORT, () => {
     console.log(`\n🚀 HookRadar Server running on http://localhost:${PORT}`);
     console.log(`📡 WebSocket available at ws://localhost:${PORT}/ws`);

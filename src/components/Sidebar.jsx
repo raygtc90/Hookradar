@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
+import BrandMark from './BrandMark';
 import { formatTime } from '../utils/api';
 import {
     cleanImportantValue,
@@ -218,7 +219,7 @@ export default function Sidebar({
                 <div className="sidebar-header-row">
                     <button className="sidebar-logo" onClick={() => handleNavigate('dashboard')} aria-label="Workspace overview" data-label="HookRadar">
                         <div className="sidebar-logo-icon">
-                            <Webhook className="sidebar-logo-glyph" />
+                            <BrandMark size={28} className="sidebar-logo-glyph" />
                         </div>
                         <div>
                             <div className="sidebar-logo-text">HookRadar</div>

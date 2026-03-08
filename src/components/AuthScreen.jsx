@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { LockKeyhole, LogIn, Moon, Radio, ShieldCheck, Sun, UserPlus, Webhook } from 'lucide-react';
+import { LockKeyhole, LogIn, Moon, Radio, ShieldCheck, Sun, UserPlus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import BrandMark from './BrandMark';
 import { api } from '../utils/api';
 
 export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSuccess }) {
@@ -49,7 +50,7 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
                 <div className="auth-copy">
                     <div className="auth-brand">
                         <div className="auth-brand-icon">
-                            <Webhook size={24} />
+                            <BrandMark size={24} />
                         </div>
                         <div>
                             <h1>HookRadar</h1>

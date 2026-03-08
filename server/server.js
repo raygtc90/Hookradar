@@ -667,12 +667,15 @@ wss.on('connection', (ws, req) => {
 // ==================== Auth Routes ====================
 
 app.get('/api/auth/session', (req, res) => {
+    const userCount = stmts.countUsers.get().count;
+
     res.json({
         success: true,
         data: {
             authenticated: Boolean(req.user),
             auth_enabled: req.authEnabled,
-            setup_required: !req.authEnabled,
+            setup_required: userCount === 0,
+            user_count: userCount,
             user: req.user,
         },
     });

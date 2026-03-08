@@ -4433,6 +4433,22 @@ select.form-input {
   justify-content: center;
 }
 
+.auth-panel-intro {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.auth-panel-intro h3 {
+  font-size: 0.98rem;
+}
+
+.auth-panel-intro p {
+  color: var(--text-secondary);
+  line-height: 1.55;
+  font-size: 0.76rem;
+}
+
 .auth-mode-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4464,6 +4480,17 @@ select.form-input {
 .auth-form {
   display: grid;
   gap: 10px;
+}
+
+.auth-setup-note {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 179, 255, 0.22);
+  background: rgba(114, 179, 255, 0.08);
+  color: var(--text-secondary);
+  line-height: 1.55;
+  font-size: 0.74rem;
 }
 
 .auth-submit {

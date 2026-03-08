@@ -4,18 +4,19 @@ import { toast } from 'react-hot-toast';
 import BrandMark from './BrandMark';
 import { api } from '../utils/api';
 
-export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSuccess }) {
-    const [mode, setMode] = useState(setupRequired ? 'signup' : 'login');
+export default function AuthScreen({ theme, toggleTheme, setupRequired, accountCount = 0, onAuthSuccess }) {
+    const hasExistingAccounts = accountCount > 0;
+    const [mode, setMode] = useState(hasExistingAccounts ? 'login' : (setupRequired ? 'signup' : 'login'));
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
-        if (setupRequired) {
+        if (!hasExistingAccounts && setupRequired) {
             setMode('signup');
         }
-    }, [setupRequired]);
+    }, [hasExistingAccounts, setupRequired]);
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -29,6 +30,12 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
             onAuthSuccess(response.data.user);
             toast.success(mode === 'signup' ? 'Account created' : 'Signed in');
         } catch (err) {
+            if (mode === 'signup' && err.message === 'An account with this email already exists') {
+                setMode('login');
+                toast.error('This email already exists. Sign in instead.');
+                return;
+            }
+
             toast.error(err.message);
         } finally {
             setLoading(false);
@@ -59,11 +66,13 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
                     </div>
 
                     <div className="auth-copy-body">
-                        <h2>{setupRequired ? 'Create the first operator account' : 'Open your webhook control deck'}</h2>
+                        <h2>{hasExistingAccounts ? 'Open your webhook control deck' : 'Create the first operator account'}</h2>
                         <p>
-                            {setupRequired
-                                ? 'The first account becomes the owner of existing endpoints and request history on this deployment.'
-                                : 'Each account gets its own isolated endpoints, captures, exports, and response settings.'}
+                            {hasExistingAccounts
+                                ? 'Each account gets its own isolated endpoints, captures, exports, and response settings.'
+                                : (
+                                    'The first account becomes the owner of existing endpoints and request history on this deployment.'
+                                )}
                         </p>
                     </div>
 
@@ -84,7 +93,16 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
                 </div>
 
                 <div className="auth-form-panel">
-                    {!setupRequired && (
+                    <div className="auth-panel-intro">
+                        <h3>{hasExistingAccounts ? 'Sign in to continue' : 'Create the first account'}</h3>
+                        <p>
+                            {hasExistingAccounts
+                                ? 'Use Sign in for existing accounts. Create account only when you want a new workspace user.'
+                                : 'This deployment has no users yet, so the first login starts with account creation.'}
+                        </p>
+                    </div>
+
+                    {hasExistingAccounts && (
                         <div className="auth-mode-switch">
                             <button
                                 type="button"
@@ -102,6 +120,12 @@ export default function AuthScreen({ theme, toggleTheme, setupRequired, onAuthSu
                                 <UserPlus size={15} />
                                 Create account
                             </button>
+                        </div>
+                    )}
+
+                    {setupRequired && !hasExistingAccounts && (
+                        <div className="auth-setup-note">
+                            First-time setup is active. Create the first account once, then this screen will default to Sign in.
                         </div>
                     )}
 

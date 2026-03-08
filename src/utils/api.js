@@ -2,6 +2,7 @@ const BASE_URL = '/api';
 
 async function request(url, options = {}) {
     const response = await fetch(`${BASE_URL}${url}`, {
+        credentials: 'same-origin',
         headers: {
             'Content-Type': 'application/json',
             ...options.headers,
@@ -81,7 +82,9 @@ export const api = {
     getStats: () => request('/stats'),
 
     exportRequests: async (endpointId) => {
-        const response = await fetch(`${BASE_URL}/endpoints/${endpointId}/export.csv`);
+        const response = await fetch(`${BASE_URL}/endpoints/${endpointId}/export.csv`, {
+            credentials: 'same-origin',
+        });
         if (!response.ok) {
             let errorMessage = 'Failed to export CSV';
             try {

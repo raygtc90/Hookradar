@@ -99,6 +99,7 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authUser, setAuthUser] = useState(null);
   const [setupRequired, setSetupRequired] = useState(false);
+  const [accountCount, setAccountCount] = useState(0);
   const [isCompactLayout, setIsCompactLayout] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia(compactLayoutQuery).matches : false
   ));
@@ -223,6 +224,7 @@ export default function App() {
         if (cancelled) return;
         setAuthUser(session.data.user || null);
         setSetupRequired(Boolean(session.data.setup_required));
+        setAccountCount(Number(session.data.user_count) || 0);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -335,6 +337,7 @@ export default function App() {
   const handleAuthSuccess = (user) => {
     setAuthUser(user);
     setSetupRequired(false);
+    setAccountCount((previous) => Math.max(previous, 1));
   };
 
   const handleLogout = async () => {
@@ -532,6 +535,7 @@ export default function App() {
           theme={theme}
           toggleTheme={toggleTheme}
           setupRequired={setupRequired}
+          accountCount={accountCount}
           onAuthSuccess={handleAuthSuccess}
         />
       ) : (

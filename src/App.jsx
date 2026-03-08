@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Menu, Plus } from 'lucide-react';
+import { Menu, PanelLeftOpen, Plus } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 import AuthScreen from './components/AuthScreen';
 import CreateEndpointModal from './components/CreateEndpointModal';
@@ -7,11 +7,86 @@ import Dashboard from './components/Dashboard';
 import EndpointView from './components/EndpointView';
 import ResponseConfig from './components/ResponseConfig';
 import Sidebar from './components/Sidebar';
+import WorkspaceSettingsModal from './components/WorkspaceSettingsModal';
+import { defaultSectionPreferences, normalizeSectionPreferences } from './utils/layoutPreferences';
 import { api, createWebSocket, isLocalHostname } from './utils/api';
 import './index.css';
 
 const defaultStats = { total_endpoints: 0, total_requests: 0, requests_today: 0 };
 const compactLayoutQuery = '(max-width: 1180px)';
+const defaultUiFontSize = 11;
+const defaultSidebarSettings = {
+  width: 264,
+  mode: 'expanded',
+  autoClose: true,
+  lockOpen: false,
+};
+const importantItemTones = ['blue', 'green', 'orange', 'purple', 'cyan', 'red'];
+const quickAccessActionTypes = ['none', 'dashboard', 'create', 'workspace-settings', 'selected-endpoint', 'response-studio', 'endpoint', 'url'];
+const defaultImportantItems = Array.from({ length: 4 }, (_, index) => ({
+  id: `important-${index + 1}`,
+  label: '',
+  detail: '',
+  tone: importantItemTones[index % importantItemTones.length],
+  actionType: 'none',
+  target: '',
+}));
+
+function clampSidebarWidth(value) {
+  const parsed = Number(value);
+
+  if (Number.isNaN(parsed)) {
+    return defaultSidebarSettings.width;
+  }
+
+  return Math.min(360, Math.max(220, parsed));
+}
+
+function normalizeSidebarMode(value) {
+  return ['expanded', 'collapsed', 'hidden'].includes(value) ? value : defaultSidebarSettings.mode;
+}
+
+function normalizeSidebarSettings(value = {}) {
+  return {
+    width: clampSidebarWidth(value.width ?? defaultSidebarSettings.width),
+    mode: normalizeSidebarMode(value.mode),
+    autoClose: typeof value.autoClose === 'boolean' ? value.autoClose : defaultSidebarSettings.autoClose,
+    lockOpen: typeof value.lockOpen === 'boolean' ? value.lockOpen : defaultSidebarSettings.lockOpen,
+  };
+}
+
+function clampUiFontSize(value) {
+  const parsed = Number(value);
+
+  if (Number.isNaN(parsed)) {
+    return defaultUiFontSize;
+  }
+
+  return Math.min(16, Math.max(10, parsed));
+}
+
+function normalizeImportantTone(value, index = 0) {
+  return importantItemTones.includes(value) ? value : importantItemTones[index % importantItemTones.length];
+}
+
+function normalizeQuickAccessActionType(value) {
+  return quickAccessActionTypes.includes(value) ? value : 'none';
+}
+
+function normalizeImportantItem(value = {}, index = 0) {
+  return {
+    id: typeof value.id === 'string' && value.id.trim() ? value.id : `important-${index + 1}`,
+    label: typeof value.label === 'string' ? value.label.slice(0, 48) : '',
+    detail: typeof value.detail === 'string' ? value.detail.slice(0, 180) : '',
+    tone: normalizeImportantTone(value.tone, index),
+    actionType: normalizeQuickAccessActionType(value.actionType),
+    target: typeof value.target === 'string' ? value.target.slice(0, 240) : '',
+  };
+}
+
+function normalizeImportantItems(value = []) {
+  return defaultImportantItems.map((fallback, index) => normalizeImportantItem(value[index] ?? fallback, index));
+}
 
 export default function App() {
   const [endpoints, setEndpoints] = useState([]);
@@ -19,8 +94,31 @@ export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedEndpoint, setSelectedEndpoint] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showWorkspaceSettings, setShowWorkspaceSettings] = useState(false);
   const [newRequestTrigger, setNewRequestTrigger] = useState(0);
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [uiFontSize, setUiFontSize] = useState(() => clampUiFontSize(localStorage.getItem('uiFontSize') || defaultUiFontSize));
+  const [sidebarSettings, setSidebarSettings] = useState(() => {
+    try {
+      return normalizeSidebarSettings(JSON.parse(localStorage.getItem('sidebarSettings') || '{}'));
+    } catch {
+      return defaultSidebarSettings;
+    }
+  });
+  const [importantItems, setImportantItems] = useState(() => {
+    try {
+      return normalizeImportantItems(JSON.parse(localStorage.getItem('workspaceImportantItems') || '[]'));
+    } catch {
+      return defaultImportantItems;
+    }
+  });
+  const [sectionPreferences, setSectionPreferences] = useState(() => {
+    try {
+      return normalizeSectionPreferences(JSON.parse(localStorage.getItem('workspaceSectionPreferences') || '{}'));
+    } catch {
+      return defaultSectionPreferences;
+    }
+  });
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authUser, setAuthUser] = useState(null);
   const [setupRequired, setSetupRequired] = useState(false);
@@ -29,11 +127,31 @@ export default function App() {
   ));
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const wsRef = useRef(null);
+  const isSidebarOverlayMode = isCompactLayout || sidebarSettings.mode === 'hidden';
+  const isSidebarCollapsed = !isCompactLayout && sidebarSettings.mode === 'collapsed';
+  const isSidebarRenderedOpen = isCompactLayout ? isSidebarOpen : (sidebarSettings.mode === 'hidden' ? isSidebarOpen : true);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${uiFontSize}px`;
+    localStorage.setItem('uiFontSize', String(uiFontSize));
+  }, [uiFontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('sidebarSettings', JSON.stringify(sidebarSettings));
+  }, [sidebarSettings]);
+
+  useEffect(() => {
+    localStorage.setItem('workspaceImportantItems', JSON.stringify(importantItems));
+  }, [importantItems]);
+
+  useEffect(() => {
+    localStorage.setItem('workspaceSectionPreferences', JSON.stringify(sectionPreferences));
+  }, [sectionPreferences]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -64,7 +182,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isCompactLayout || !isSidebarOpen) {
+    if (!isSidebarOverlayMode || !isSidebarOpen) {
       return undefined;
     }
 
@@ -79,17 +197,37 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isCompactLayout, isSidebarOpen]);
+  }, [isSidebarOpen, isSidebarOverlayMode]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   const closeSidebar = () => setIsSidebarOpen(false);
+  const openSidebar = () => setIsSidebarOpen(true);
+
+  const closeSidebarAfterNavigation = () => {
+    if (!isSidebarOverlayMode) {
+      return;
+    }
+
+    if (sidebarSettings.lockOpen) {
+      return;
+    }
+
+    if (sidebarSettings.autoClose) {
+      closeSidebar();
+    }
+  };
+
   const openCreateModal = () => {
     setShowCreateModal(true);
     closeSidebar();
   };
+  const openWorkspaceSettings = () => {
+    setShowWorkspaceSettings(true);
+    closeSidebar();
+  };
   const handleNavigate = (view) => {
     setCurrentView(view);
-    closeSidebar();
+    closeSidebarAfterNavigation();
   };
 
   const resetWorkspaceState = () => {
@@ -293,7 +431,37 @@ export default function App() {
   const handleSelectEndpoint = (endpoint) => {
     setSelectedEndpoint(endpoint);
     setCurrentView('endpoint');
-    closeSidebar();
+    closeSidebarAfterNavigation();
+  };
+
+  const handleApplyWorkspaceSettings = ({
+    fontSize,
+    sidebar,
+    importantItems: nextImportantItems,
+    sectionPreferences: nextSectionPreferences,
+  }) => {
+    const nextFontSize = clampUiFontSize(fontSize);
+    const nextSidebarSettings = normalizeSidebarSettings(sidebar);
+    const normalizedImportantItems = normalizeImportantItems(nextImportantItems);
+    const normalizedSectionPreferences = normalizeSectionPreferences(nextSectionPreferences);
+
+    setUiFontSize(nextFontSize);
+    setSidebarSettings(nextSidebarSettings);
+    setImportantItems(normalizedImportantItems);
+    setSectionPreferences(normalizedSectionPreferences);
+
+    if (!isCompactLayout && nextSidebarSettings.mode !== 'hidden') {
+      closeSidebar();
+    }
+
+    toast.success('Workspace settings updated');
+  };
+
+  const handleChangeSectionMode = (sectionId, mode) => {
+    setSectionPreferences((previous) => ({
+      ...previous,
+      [sectionId]: mode,
+    }));
   };
 
   const currentPanelTitle = currentView === 'settings'
@@ -315,7 +483,9 @@ export default function App() {
           <Dashboard
             stats={stats}
             endpoints={endpoints}
+            sectionPreferences={sectionPreferences}
             onCreateEndpoint={openCreateModal}
+            onChangeSectionMode={handleChangeSectionMode}
             onSelectEndpoint={handleSelectEndpoint}
             onDeleteEndpoint={handleDeleteEndpoint}
           />
@@ -325,7 +495,9 @@ export default function App() {
           <EndpointView
             key={selectedEndpoint.id}
             endpoint={selectedEndpoint}
+            sectionPreferences={sectionPreferences}
             onUpdate={handleUpdateEndpoint}
+            onChangeSectionMode={handleChangeSectionMode}
             newRequestTrigger={newRequestTrigger}
           />
         ) : null;
@@ -334,7 +506,9 @@ export default function App() {
           <ResponseConfig
             key={selectedEndpoint ? `${selectedEndpoint.id}:${selectedEndpoint.updated_at}` : 'settings'}
             endpoint={selectedEndpoint}
+            sectionPreferences={sectionPreferences}
             onUpdate={handleUpdateEndpoint}
+            onChangeSectionMode={handleChangeSectionMode}
           />
         );
       default:
@@ -342,7 +516,9 @@ export default function App() {
           <Dashboard
             stats={stats}
             endpoints={endpoints}
+            sectionPreferences={sectionPreferences}
             onCreateEndpoint={openCreateModal}
+            onChangeSectionMode={handleChangeSectionMode}
             onSelectEndpoint={handleSelectEndpoint}
             onDeleteEndpoint={handleDeleteEndpoint}
           />
@@ -383,10 +559,16 @@ export default function App() {
         />
       ) : (
         <>
-          <div className="app-layout">
-            {isCompactLayout && (
+          <div
+            className={`app-layout ${sidebarSettings.mode === 'hidden' && !isCompactLayout ? 'app-layout-sidebar-hidden' : ''}`}
+            style={{
+              '--sidebar-width': `${sidebarSettings.width}px`,
+              '--sidebar-collapsed-width': `${Math.max(72, Math.min(112, Math.round(sidebarSettings.width * 0.34)))}px`,
+            }}
+          >
+            {isSidebarOverlayMode && (
               <button
-                className={`sidebar-backdrop ${isSidebarOpen ? 'visible' : ''}`}
+                className={`sidebar-backdrop ${isSidebarRenderedOpen ? 'visible' : ''}`}
                 onClick={closeSidebar}
                 aria-label="Close navigation"
               />
@@ -399,22 +581,39 @@ export default function App() {
               currentView={currentView}
               stats={stats}
               theme={theme}
+              uiFontSize={uiFontSize}
+              sidebarSettings={sidebarSettings}
+              importantItems={importantItems}
               toggleTheme={toggleTheme}
               isCompactLayout={isCompactLayout}
-              isOpen={isSidebarOpen}
+              isOpen={isSidebarRenderedOpen}
+              isOverlayMode={isSidebarOverlayMode}
+              isCollapsed={isSidebarCollapsed}
               onClose={closeSidebar}
               onNavigate={handleNavigate}
               onSelectEndpoint={handleSelectEndpoint}
               onCreateEndpoint={openCreateModal}
+              onOpenWorkspaceSettings={openWorkspaceSettings}
               onLogout={handleLogout}
             />
 
             <main className="main-content">
+              {!isCompactLayout && sidebarSettings.mode === 'hidden' && !isSidebarRenderedOpen && (
+                <button
+                  className="desktop-shell-menu"
+                  onClick={openSidebar}
+                  aria-label="Open sidebar"
+                >
+                  <PanelLeftOpen size={16} />
+                  Sidebar
+                </button>
+              )}
+
               {isCompactLayout && (
                 <div className="mobile-shell-bar">
                   <button
                     className="mobile-shell-menu"
-                    onClick={() => setIsSidebarOpen(true)}
+                    onClick={openSidebar}
                     aria-label="Open navigation"
                   >
                     <Menu size={18} />
@@ -441,6 +640,19 @@ export default function App() {
             <CreateEndpointModal
               onClose={() => setShowCreateModal(false)}
               onCreate={handleCreateEndpoint}
+            />
+          )}
+
+          {showWorkspaceSettings && (
+            <WorkspaceSettingsModal
+              currentFontSize={uiFontSize}
+              currentSectionPreferences={sectionPreferences}
+              currentSidebarSettings={sidebarSettings}
+              currentImportantItems={importantItems}
+              endpoints={endpoints}
+              selectedEndpoint={selectedEndpoint}
+              onClose={() => setShowWorkspaceSettings(false)}
+              onApply={handleApplyWorkspaceSettings}
             />
           )}
         </>

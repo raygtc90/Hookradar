@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     ArrowUpRight,
     Check,
@@ -27,6 +27,7 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
     const headerEntries = Object.entries(headers);
     const queryEntries = Object.entries(queryParams);
     const requestPath = normalizeRequestPath(request.path);
+    const isHttpRequest = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(request.method);
 
     const overviewCards = [
         { icon: Clock, label: 'Captured', value: formatTime(request.created_at) },
@@ -40,8 +41,14 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
         { id: 'headers', label: 'Headers', count: headerEntries.length },
         { id: 'body', label: 'Body', count: request.body ? 1 : 0 },
         { id: 'query', label: 'Query', count: queryEntries.length },
-        { id: 'curl', label: 'cURL', count: null },
+        ...(isHttpRequest ? [{ id: 'curl', label: 'cURL', count: null }] : []),
     ];
+
+    useEffect(() => {
+        if (!isHttpRequest && activeTab === 'curl') {
+            setActiveTab('headers');
+        }
+    }, [activeTab, isHttpRequest]);
 
     const handleCopy = async (text, key) => {
         try {
@@ -107,10 +114,12 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
                 </div>
 
                 <div className="request-detail-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={() => setShowReplay((current) => !current)} title="Replay request">
-                        <Send className="icon" size={14} />
-                        Replay
-                    </button>
+                    {isHttpRequest && (
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShowReplay((current) => !current)} title="Replay request">
+                            <Send className="icon" size={14} />
+                            Replay
+                        </button>
+                    )}
                     <button className="btn btn-danger btn-sm" onClick={() => onDelete(request.id)} title="Delete request">
                         <Trash2 className="icon" size={14} />
                         Delete
@@ -118,7 +127,7 @@ export default function RequestDetail({ request, onDelete, webhookUrl }) {
                 </div>
             </div>
 
-            {showReplay && (
+            {showReplay && isHttpRequest && (
                 <div className="request-replay-panel">
                     <div className="request-replay-header">
                         <ArrowUpRight size={14} />

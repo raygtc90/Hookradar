@@ -31,6 +31,25 @@ export const api = {
     getEndpoint: (id) => request(`/endpoints/${id}`),
     updateEndpoint: (id, data) => request(`/endpoints/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteEndpoint: (id) => request(`/endpoints/${id}`, { method: 'DELETE' }),
+    getIntegrations: (endpointId) => request(`/endpoints/${endpointId}/integrations`),
+    updateIntegration: (endpointId, provider, data) =>
+        request(`/endpoints/${endpointId}/integrations/${provider}`, { method: 'PUT', body: JSON.stringify(data) }),
+    testIntegration: (endpointId, provider) =>
+        request(`/endpoints/${endpointId}/integrations/${provider}/test`, { method: 'POST' }),
+    getEmailInbox: (endpointId) => request(`/endpoints/${endpointId}/email-inbox`),
+    updateEmailInbox: (endpointId, data) =>
+        request(`/endpoints/${endpointId}/email-inbox`, { method: 'PUT', body: JSON.stringify(data) }),
+    testEmailInbox: (endpointId) => request(`/endpoints/${endpointId}/email-inbox/test`, { method: 'POST' }),
+    getGoogleSheetsIntegration: (endpointId) => request(`/endpoints/${endpointId}/google-sheets`),
+    updateGoogleSheetsIntegration: (endpointId, data) =>
+        request(`/endpoints/${endpointId}/google-sheets`, { method: 'PUT', body: JSON.stringify(data) }),
+    testGoogleSheetsIntegration: (endpointId) =>
+        request(`/endpoints/${endpointId}/google-sheets/test`, { method: 'POST' }),
+    getWorkflows: (endpointId) => request(`/endpoints/${endpointId}/workflows`),
+    createWorkflow: (endpointId, data) => request(`/endpoints/${endpointId}/workflows`, { method: 'POST', body: JSON.stringify(data) }),
+    updateWorkflow: (workflowId, data) => request(`/workflows/${workflowId}`, { method: 'PUT', body: JSON.stringify(data) }),
+    testWorkflow: (workflowId) => request(`/workflows/${workflowId}/test`, { method: 'POST' }),
+    deleteWorkflow: (workflowId) => request(`/workflows/${workflowId}`, { method: 'DELETE' }),
     getSchedules: (endpointId) => request(`/endpoints/${endpointId}/schedules`),
     createSchedule: (endpointId, data) => request(`/endpoints/${endpointId}/schedules`, { method: 'POST', body: JSON.stringify(data) }),
     updateSchedule: (scheduleId, data) => request(`/schedules/${scheduleId}`, { method: 'PUT', body: JSON.stringify(data) }),

@@ -20,8 +20,30 @@ import {
     verifyPassword,
 } from './auth.js';
 import { db, stmts } from './database.js';
+import {
+    appendWebhookToGoogleSheet,
+    normalizeSheetName,
+    normalizeSpreadsheetId,
+    parseServiceAccountCredentials,
+    sendGoogleSheetsTestRow,
+} from './googleSheets.js';
+import {
+    getInboundEmailStatus,
+    normalizeEmailLocalPart,
+    startInboundEmailServer,
+    stopInboundEmailServer,
+} from './inboundEmail.js';
+import {
+    buildIntegrationMap,
+    buildIntegrationRecord,
+    dispatchIntegration,
+    dispatchIntegrationTest,
+    normalizeIntegrationConfig,
+    normalizeProvider,
+} from './integrations.js';
 import { computeNextRunAt, normalizeSchedulePath, runScheduleNow, startScheduler, stopScheduler } from './scheduler.js';
 import { getPublicTunnelStatus, startPublicTunnel, stopPublicTunnel } from './tunnel.js';
+import { normalizeWorkflowInput, runWorkflow, workflowMatchesRequest } from './workflows.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -86,6 +108,46 @@ function getScheduleForRequest(req, scheduleId) {
     return stmts.getScheduleWithEndpoint.get(scheduleId);
 }
 
+function getGoogleSheetsIntegrationForRequest(req, endpointId) {
+    if (req.authEnabled) {
+        return stmts.getGoogleSheetsIntegrationByEndpointForOwner.get(endpointId, req.user.id);
+    }
+
+    return stmts.getGoogleSheetsIntegrationByEndpoint.get(endpointId);
+}
+
+function getIntegrationsForRequest(req, endpointId) {
+    if (req.authEnabled) {
+        return stmts.getIntegrationsByEndpointForOwner.all(endpointId, req.user.id);
+    }
+
+    return stmts.getIntegrationsByEndpoint.all(endpointId);
+}
+
+function getIntegrationForRequest(req, endpointId, provider) {
+    if (req.authEnabled) {
+        return stmts.getIntegrationByEndpointAndProviderForOwner.get(endpointId, provider, req.user.id);
+    }
+
+    return stmts.getIntegrationByEndpointAndProvider.get(endpointId, provider);
+}
+
+function getEmailInboxForRequest(req, endpointId) {
+    if (req.authEnabled) {
+        return stmts.getEmailInboxByEndpointForOwner.get(endpointId, req.user.id);
+    }
+
+    return stmts.getEmailInboxByEndpoint.get(endpointId);
+}
+
+function getWorkflowForRequest(req, workflowId) {
+    if (req.authEnabled) {
+        return stmts.getWorkflowByOwner.get(workflowId, req.user.id);
+    }
+
+    return stmts.getWorkflow.get(workflowId);
+}
+
 function normalizeSlug(input) {
     return (input || '').trim().toLowerCase();
 }
@@ -135,6 +197,349 @@ function normalizeScheduleInput(input, existing = {}) {
         is_active: isActive,
         next_run_at: isActive ? computeNextRunAt(intervalMinutes) : null,
     };
+}
+
+function normalizeGoogleSheetsIntegrationInput(input, existing = {}) {
+    const enabledValue = input.is_enabled ?? existing.is_enabled ?? 0;
+    const isEnabled = enabledValue === true || enabledValue === 1 || enabledValue === '1' ? 1 : 0;
+    const spreadsheetId = input.spreadsheet_id ?? existing.spreadsheet_id ?? '';
+    const sheetName = input.sheet_name ?? existing.sheet_name ?? 'Webhook Events';
+    const credentialsJson = input.credentials_json ?? existing.credentials_json ?? '';
+
+    if (credentialsJson) {
+        parseServiceAccountCredentials(credentialsJson);
+    }
+
+    if (isEnabled) {
+        if (!spreadsheetId) {
+            throw new Error('Google Spreadsheet ID or URL is required when Sheets sync is enabled');
+        }
+
+        if (!credentialsJson) {
+            throw new Error('Google service account JSON is required when Sheets sync is enabled');
+        }
+    }
+
+    return {
+        is_enabled: isEnabled,
+        spreadsheet_id: spreadsheetId ? normalizeSpreadsheetId(spreadsheetId) : '',
+        sheet_name: normalizeSheetName(sheetName),
+        credentials_json: credentialsJson,
+    };
+}
+
+function normalizeEmailInboxInput(input, endpoint, existing = {}) {
+    const enabledValue = input.is_enabled ?? existing.is_enabled ?? 0;
+    const isEnabled = enabledValue === true || enabledValue === 1 || enabledValue === '1' ? 1 : 0;
+    const requestedLocalPart = input.local_part ?? existing.local_part ?? endpoint.slug;
+    const localPart = normalizeEmailLocalPart(requestedLocalPart || endpoint.slug);
+
+    if (isEnabled && !localPart) {
+        throw new Error('Choose a valid inbox local-part before enabling email capture');
+    }
+
+    return {
+        is_enabled: isEnabled,
+        local_part: localPart || normalizeEmailLocalPart(endpoint.slug),
+        allow_plus_aliases: input.allow_plus_aliases === false || input.allow_plus_aliases === 0 || input.allow_plus_aliases === '0' ? 0 : 1,
+        reply_name: (input.reply_name ?? existing.reply_name ?? endpoint.name ?? '').trim(),
+    };
+}
+
+function parseStoredJson(value, fallback = {}) {
+    if (!value || typeof value !== 'string') {
+        return fallback;
+    }
+
+    try {
+        const parsed = JSON.parse(value);
+        return parsed ?? fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+function isHttpRequestMethod(method) {
+    return ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(String(method || '').toUpperCase());
+}
+
+function buildCapturedRequestEnvelope(endpoint, request) {
+    return {
+        endpoint: {
+            id: endpoint.id,
+            slug: endpoint.slug,
+            name: endpoint.name || '',
+        },
+        request: {
+            ...request,
+            headers: parseStoredJson(request.headers, {}),
+            query_params: parseStoredJson(request.query_params, {}),
+            body_json: parseStoredJson(request.body, null),
+        },
+    };
+}
+
+function persistCapturedRequest(endpoint, requestData) {
+    const requestId = uuidv4();
+
+    stmts.createRequest.run(
+        requestId,
+        endpoint.id,
+        requestData.method,
+        requestData.path,
+        JSON.stringify(requestData.headers || {}),
+        JSON.stringify(requestData.query_params || {}),
+        requestData.body || '',
+        requestData.content_type || '',
+        requestData.ip_address || '',
+        requestData.user_agent || '',
+        requestData.size || Buffer.byteLength(requestData.body || '', 'utf8'),
+        requestData.response_status ?? endpoint.response_status,
+        requestData.response_time ?? 0,
+    );
+
+    return stmts.getRequest.get(requestId);
+}
+
+function dispatchForwarding(endpoint, request) {
+    if (!endpoint.forwarding_url) {
+        return;
+    }
+
+    const method = String(request.method || '').toUpperCase();
+    const requestHeaders = parseStoredJson(request.headers, {});
+
+    if (isHttpRequestMethod(method)) {
+        const forwardHeaders = { ...requestHeaders };
+        delete forwardHeaders.host;
+        delete forwardHeaders['content-length'];
+
+        fetch(endpoint.forwarding_url, {
+            method,
+            headers: forwardHeaders,
+            body: ['GET', 'HEAD'].includes(method) ? undefined : request.body,
+        }).then((fwdRes) => {
+            console.log(`📤 Forwarded ${request.method} to ${endpoint.forwarding_url} → ${fwdRes.status}`);
+            broadcastToEndpoint(endpoint, {
+                type: 'forward_result',
+                request_id: request.id,
+                status: fwdRes.status,
+                url: endpoint.forwarding_url,
+            });
+        }).catch((fwdErr) => {
+            console.error(`📤 Forward failed to ${endpoint.forwarding_url}:`, fwdErr.message);
+            broadcastToEndpoint(endpoint, {
+                type: 'forward_error',
+                request_id: request.id,
+                error: fwdErr.message,
+                url: endpoint.forwarding_url,
+            });
+        });
+
+        return;
+    }
+
+    fetch(endpoint.forwarding_url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-HookRadar-Source': method,
+        },
+        body: JSON.stringify(buildCapturedRequestEnvelope(endpoint, request)),
+    }).then((fwdRes) => {
+        console.log(`📤 Forwarded ${request.method} to ${endpoint.forwarding_url} → ${fwdRes.status}`);
+        broadcastToEndpoint(endpoint, {
+            type: 'forward_result',
+            request_id: request.id,
+            status: fwdRes.status,
+            url: endpoint.forwarding_url,
+        });
+    }).catch((fwdErr) => {
+        console.error(`📤 Forward failed to ${endpoint.forwarding_url}:`, fwdErr.message);
+        broadcastToEndpoint(endpoint, {
+            type: 'forward_error',
+            request_id: request.id,
+            error: fwdErr.message,
+            url: endpoint.forwarding_url,
+        });
+    });
+}
+
+function dispatchGoogleSheetsSync(endpoint, request) {
+    const googleSheetsIntegration = stmts.getGoogleSheetsIntegrationByEndpoint.get(endpoint.id);
+    if (!googleSheetsIntegration?.is_enabled) {
+        return;
+    }
+
+    appendWebhookToGoogleSheet(googleSheetsIntegration, endpoint, request)
+        .then(() => {
+            stmts.updateGoogleSheetsIntegrationStatus.run(formatSqliteDate(new Date()), null, endpoint.id);
+            console.log(`📄 Synced ${request.method} ${request.path} to Google Sheets for ${endpoint.slug}`);
+        })
+        .catch((syncErr) => {
+            stmts.updateGoogleSheetsIntegrationStatus.run(null, syncErr.message, endpoint.id);
+            console.error(`📄 Google Sheets sync failed for ${endpoint.slug}:`, syncErr.message);
+        });
+}
+
+function dispatchSavedIntegrations(endpoint, request) {
+    const enabledIntegrations = stmts.getEnabledIntegrationsByEndpoint.all(endpoint.id);
+    for (const integration of enabledIntegrations) {
+        const config = integration.config_json ? JSON.parse(integration.config_json) : {};
+
+        dispatchIntegration(integration.provider, config, endpoint, request)
+            .then(() => {
+                stmts.updateIntegrationStatus.run(formatSqliteDate(new Date()), null, endpoint.id, integration.provider);
+                console.log(`🔌 Delivered ${request.method} ${request.path} to ${integration.provider} for ${endpoint.slug}`);
+            })
+            .catch((integrationErr) => {
+                stmts.updateIntegrationStatus.run(null, integrationErr.message, endpoint.id, integration.provider);
+                console.error(`🔌 ${integration.provider} delivery failed for ${endpoint.slug}:`, integrationErr.message);
+            });
+    }
+}
+
+function dispatchWorkflows(endpoint, request) {
+    const activeWorkflows = stmts.getActiveWorkflowsByEndpoint.all(endpoint.id);
+
+    for (const workflow of activeWorkflows) {
+        if (!workflowMatchesRequest(workflow, request)) {
+            continue;
+        }
+
+        runWorkflow(workflow, endpoint, request, {
+            resolveIntegrationConfig(provider) {
+                return stmts.getIntegrationByEndpointAndProvider.get(endpoint.id, provider);
+            },
+        }).then(() => {
+            stmts.updateWorkflowRuntime.run(formatSqliteDate(new Date()), null, workflow.id);
+            console.log(`🧠 Workflow "${workflow.name || workflow.id}" ran for ${endpoint.slug}`);
+        }).catch((workflowErr) => {
+            stmts.updateWorkflowRuntime.run(formatSqliteDate(new Date()), workflowErr.message, workflow.id);
+            console.error(`🧠 Workflow "${workflow.name || workflow.id}" failed for ${endpoint.slug}:`, workflowErr.message);
+        });
+    }
+}
+
+function triggerPostCaptureAutomation(endpoint, request) {
+    dispatchForwarding(endpoint, request);
+    dispatchGoogleSheetsSync(endpoint, request);
+    dispatchSavedIntegrations(endpoint, request);
+    dispatchWorkflows(endpoint, request);
+}
+
+function decorateEmailInbox(emailInbox, endpoint) {
+    const inboxStatus = getInboundEmailStatus();
+    const localPart = emailInbox?.local_part || normalizeEmailLocalPart(endpoint.slug);
+
+    return {
+        endpoint_id: endpoint.id,
+        owner_user_id: emailInbox?.owner_user_id ?? endpoint.owner_user_id ?? null,
+        is_enabled: emailInbox?.is_enabled ?? 0,
+        local_part: localPart,
+        allow_plus_aliases: emailInbox?.allow_plus_aliases ?? 1,
+        reply_name: emailInbox?.reply_name ?? endpoint.name ?? '',
+        last_email_at: emailInbox?.last_email_at ?? null,
+        last_error: emailInbox?.last_error ?? null,
+        inbox_domain: inboxStatus.domain,
+        inbox_enabled: inboxStatus.enabled,
+        inbox_active: inboxStatus.active,
+        smtp_host: inboxStatus.host,
+        smtp_port: inboxStatus.port,
+        email_address: inboxStatus.domain ? `${localPart}@${inboxStatus.domain}` : null,
+        supports_plus_aliases: emailInbox?.allow_plus_aliases !== 0,
+    };
+}
+
+function extractRecipientLocalPart(address) {
+    const raw = String(address || '').trim().toLowerCase();
+    const value = raw.includes('@') ? raw.split('@')[0] : raw;
+    const [base] = value.split('+');
+    return {
+        full: normalizeEmailLocalPart(value),
+        base: normalizeEmailLocalPart(base),
+    };
+}
+
+function serializeEmailAddressList(value) {
+    if (!value?.value) {
+        return [];
+    }
+
+    return value.value.map((entry) => ({
+        name: entry.name || '',
+        address: entry.address || '',
+    }));
+}
+
+function resolveEmailInboxByAddress(address) {
+    const { full, base } = extractRecipientLocalPart(address);
+
+    if (!full) {
+        return null;
+    }
+
+    const exactMatch = stmts.getEmailInboxByLocalPart.get(full);
+    if (exactMatch) {
+        return exactMatch;
+    }
+
+    if (base && base !== full) {
+        const baseMatch = stmts.getEmailInboxByLocalPart.get(base);
+        if (baseMatch?.allow_plus_aliases) {
+            return baseMatch;
+        }
+    }
+
+    return null;
+}
+
+function captureEmailMessage(endpoint, emailInbox, { parsed, recipientAddress, session }) {
+    const emailHeaders = {
+        'x-hookradar-email-subject': parsed.subject || '',
+        'x-hookradar-email-from': parsed.from?.text || '',
+        'x-hookradar-email-to': parsed.to?.text || '',
+        'x-hookradar-email-message-id': parsed.messageId || '',
+        'x-hookradar-email-source': 'smtp',
+        'x-hookradar-email-recipient': recipientAddress || '',
+    };
+    const body = JSON.stringify({
+        subject: parsed.subject || '',
+        from: serializeEmailAddressList(parsed.from),
+        to: serializeEmailAddressList(parsed.to),
+        cc: serializeEmailAddressList(parsed.cc),
+        bcc: serializeEmailAddressList(parsed.bcc),
+        date: parsed.date ? parsed.date.toISOString() : null,
+        text: parsed.text || '',
+        html: parsed.html ? String(parsed.html) : '',
+        attachments: (parsed.attachments || []).map((attachment) => ({
+            filename: attachment.filename || '',
+            contentType: attachment.contentType || '',
+            size: attachment.size || 0,
+        })),
+    }, null, 2);
+    const savedRequest = persistCapturedRequest(endpoint, {
+        method: 'EMAIL',
+        path: `/email/${emailInbox.local_part}`,
+        headers: emailHeaders,
+        query_params: {},
+        body,
+        content_type: 'message/rfc822+json',
+        ip_address: session?.remoteAddress || '',
+        user_agent: 'Inbound SMTP',
+        response_status: 202,
+        response_time: 0,
+    });
+
+    stmts.updateEmailInboxStatus.run(formatSqliteDate(new Date()), null, endpoint.id);
+    broadcastToEndpoint(endpoint, {
+        type: 'new_request',
+        endpoint_id: endpoint.id,
+        request: savedRequest,
+    });
+    triggerPostCaptureAutomation(endpoint, savedRequest);
+
+    return savedRequest;
 }
 
 function escapeCsvValue(value) {
@@ -300,6 +705,10 @@ app.post('/api/auth/signup', (req, res) => {
         if (existingUserCount === 0) {
             stmts.adoptUnownedEndpoints.run(userId);
             stmts.adoptUnownedSchedules.run(userId);
+            stmts.adoptUnownedGoogleSheetsIntegrations.run(userId);
+            stmts.adoptUnownedEndpointIntegrations.run(userId);
+            stmts.adoptUnownedEmailInboxes.run(userId);
+            stmts.adoptUnownedWorkflows.run(userId);
         }
 
         const sessionToken = createSessionToken();
@@ -519,13 +928,400 @@ app.delete('/api/endpoints/:id', requireAccess, (req, res) => {
         }
 
         if (req.authEnabled) {
+            stmts.deleteEmailInboxByEndpointForOwner.run(req.params.id, req.user.id);
+            stmts.deleteGoogleSheetsIntegrationByEndpointForOwner.run(req.params.id, req.user.id);
+            stmts.deleteIntegrationsByEndpointForOwner.run(req.params.id, req.user.id);
+            stmts.deleteWorkflowsByEndpointByOwner.run(req.params.id, req.user.id);
             stmts.deleteSchedulesByEndpointByOwner.run(req.params.id, req.user.id);
             stmts.deleteRequestsByEndpointByOwner.run(req.params.id, req.user.id);
             stmts.deleteEndpointByOwner.run(req.params.id, req.user.id);
         } else {
+            stmts.deleteEmailInboxByEndpoint.run(req.params.id);
+            stmts.deleteGoogleSheetsIntegrationByEndpoint.run(req.params.id);
+            stmts.deleteIntegrationsByEndpoint.run(req.params.id);
+            stmts.deleteWorkflowsByEndpoint.run(req.params.id);
             stmts.deleteSchedulesByEndpoint.run(req.params.id);
             stmts.deleteRequestsByEndpoint.run(req.params.id);
             stmts.deleteEndpoint.run(req.params.id);
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/endpoints/:id/email-inbox', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const inbox = getEmailInboxForRequest(req, req.params.id);
+        res.json({ success: true, data: decorateEmailInbox(inbox, endpoint) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/endpoints/:id/email-inbox', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const existing = getEmailInboxForRequest(req, req.params.id) || {};
+        const input = normalizeEmailInboxInput(req.body, endpoint, existing);
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+        const conflictingInbox = stmts.getEmailInboxByLocalPart.get(input.local_part);
+
+        if (conflictingInbox && conflictingInbox.endpoint_id !== endpoint.id) {
+            return res.status(409).json({ success: false, error: 'This inbox address is already in use by another endpoint' });
+        }
+
+        stmts.upsertEmailInbox.run(
+            endpoint.id,
+            ownerUserId,
+            input.is_enabled,
+            input.local_part,
+            input.allow_plus_aliases,
+            input.reply_name,
+        );
+
+        const inbox = getEmailInboxForRequest(req, req.params.id);
+        res.json({ success: true, data: decorateEmailInbox(inbox, endpoint) });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/endpoints/:id/email-inbox/test', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const inbox = getEmailInboxForRequest(req, req.params.id);
+        if (!inbox) {
+            return res.status(404).json({ success: false, error: 'Save the inbox settings before sending a sample email' });
+        }
+
+        const inboxDetails = decorateEmailInbox(inbox, endpoint);
+        const parsed = {
+            subject: 'HookRadar sample email',
+            from: {
+                text: 'HookRadar <demo@hookradar.dev>',
+                value: [{ name: 'HookRadar', address: 'demo@hookradar.dev' }],
+            },
+            to: {
+                text: inboxDetails.email_address || inbox.local_part,
+                value: [{ name: inbox.reply_name || endpoint.name || endpoint.slug, address: inboxDetails.email_address || `${inbox.local_part}@example.test` }],
+            },
+            cc: { value: [] },
+            bcc: { value: [] },
+            date: new Date(),
+            text: 'This is a sample inbound email generated by HookRadar.',
+            html: '<p>This is a sample inbound email generated by <strong>HookRadar</strong>.</p>',
+            attachments: [],
+            messageId: `<${uuidv4()}@hookradar.test>`,
+        };
+
+        const savedRequest = captureEmailMessage(endpoint, inbox, {
+            parsed,
+            recipientAddress: inboxDetails.email_address || inbox.local_part,
+            session: { remoteAddress: '127.0.0.1' },
+        });
+
+        const refreshedInbox = getEmailInboxForRequest(req, req.params.id);
+        res.json({ success: true, data: { inbox: decorateEmailInbox(refreshedInbox, endpoint), request: savedRequest } });
+    } catch (err) {
+        stmts.updateEmailInboxStatus.run(null, err.message, req.params.id);
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/endpoints/:id/google-sheets', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const integration = getGoogleSheetsIntegrationForRequest(req, req.params.id) || {
+            endpoint_id: req.params.id,
+            owner_user_id: req.authEnabled ? req.user.id : null,
+            is_enabled: 0,
+            spreadsheet_id: '',
+            sheet_name: 'Webhook Events',
+            credentials_json: '',
+            last_synced_at: null,
+            last_error: null,
+        };
+
+        res.json({ success: true, data: integration });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/endpoints/:id/google-sheets', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const existing = getGoogleSheetsIntegrationForRequest(req, req.params.id) || {};
+        const integrationInput = normalizeGoogleSheetsIntegrationInput(req.body, existing);
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+
+        stmts.upsertGoogleSheetsIntegration.run(
+            req.params.id,
+            ownerUserId,
+            integrationInput.is_enabled,
+            integrationInput.spreadsheet_id,
+            integrationInput.sheet_name,
+            integrationInput.credentials_json,
+        );
+
+        const integration = getGoogleSheetsIntegrationForRequest(req, req.params.id);
+        res.json({ success: true, data: integration });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/endpoints/:id/google-sheets/test', requireAccess, async (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const integration = getGoogleSheetsIntegrationForRequest(req, req.params.id);
+        if (!integration) {
+            return res.status(404).json({ success: false, error: 'Google Sheets integration is not configured yet' });
+        }
+
+        await sendGoogleSheetsTestRow(integration, endpoint);
+        stmts.updateGoogleSheetsIntegrationStatus.run(formatSqliteDate(new Date()), null, req.params.id);
+
+        const updated = getGoogleSheetsIntegrationForRequest(req, req.params.id);
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        stmts.updateGoogleSheetsIntegrationStatus.run(null, err.message, req.params.id);
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/endpoints/:id/integrations', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const rows = getIntegrationsForRequest(req, req.params.id);
+        const integrations = buildIntegrationMap(req.params.id, req.authEnabled ? req.user.id : null, rows);
+        res.json({ success: true, data: integrations });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/endpoints/:id/integrations/:provider', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const provider = normalizeProvider(req.params.provider);
+        const existing = getIntegrationForRequest(req, req.params.id, provider);
+        const existingConfig = existing?.config_json ? JSON.parse(existing.config_json) : undefined;
+        const integrationInput = normalizeIntegrationConfig(provider, req.body, existingConfig);
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+
+        stmts.upsertIntegration.run(
+            req.params.id,
+            provider,
+            ownerUserId,
+            integrationInput.is_enabled,
+            JSON.stringify(integrationInput.config),
+        );
+
+        const integration = getIntegrationForRequest(req, req.params.id, provider);
+        res.json({
+            success: true,
+            data: buildIntegrationRecord(req.params.id, ownerUserId, provider, integration),
+        });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/endpoints/:id/integrations/:provider/test', requireAccess, async (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const provider = normalizeProvider(req.params.provider);
+        const integration = getIntegrationForRequest(req, req.params.id, provider);
+        if (!integration) {
+            return res.status(404).json({ success: false, error: 'Save this integration before sending a test event' });
+        }
+
+        const config = integration.config_json ? JSON.parse(integration.config_json) : {};
+        await dispatchIntegrationTest(provider, config, endpoint);
+        stmts.updateIntegrationStatus.run(formatSqliteDate(new Date()), null, req.params.id, provider);
+
+        const updated = getIntegrationForRequest(req, req.params.id, provider);
+        res.json({
+            success: true,
+            data: buildIntegrationRecord(req.params.id, req.authEnabled ? req.user.id : null, provider, updated),
+        });
+    } catch (err) {
+        stmts.updateIntegrationStatus.run(null, err.message, req.params.id, req.params.provider);
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.get('/api/endpoints/:id/workflows', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const workflows = req.authEnabled
+            ? stmts.getWorkflowsByEndpointByOwner.all(req.params.id, req.user.id)
+            : stmts.getWorkflowsByEndpoint.all(req.params.id);
+
+        res.json({ success: true, data: workflows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/endpoints/:id/workflows', requireAccess, (req, res) => {
+    try {
+        const endpoint = getEndpointForRequest(req, req.params.id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const workflowId = uuidv4();
+        const ownerUserId = req.authEnabled ? req.user.id : null;
+        const workflowInput = normalizeWorkflowInput(req.body);
+
+        stmts.createWorkflow.run(
+            workflowId,
+            ownerUserId,
+            endpoint.id,
+            workflowInput.name,
+            workflowInput.description,
+            workflowInput.is_active,
+            workflowInput.conditions_json,
+            workflowInput.actions_json,
+        );
+
+        const workflow = getWorkflowForRequest(req, workflowId);
+        res.status(201).json({ success: true, data: workflow });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.put('/api/workflows/:id', requireAccess, (req, res) => {
+    try {
+        const existing = getWorkflowForRequest(req, req.params.id);
+        if (!existing) {
+            return res.status(404).json({ success: false, error: 'Workflow not found' });
+        }
+
+        const workflowInput = normalizeWorkflowInput(req.body, existing);
+
+        if (req.authEnabled) {
+            stmts.updateWorkflowByOwner.run(
+                workflowInput.name,
+                workflowInput.description,
+                workflowInput.is_active,
+                workflowInput.conditions_json,
+                workflowInput.actions_json,
+                req.params.id,
+                req.user.id,
+            );
+        } else {
+            stmts.updateWorkflow.run(
+                workflowInput.name,
+                workflowInput.description,
+                workflowInput.is_active,
+                workflowInput.conditions_json,
+                workflowInput.actions_json,
+                req.params.id,
+            );
+        }
+
+        const updated = getWorkflowForRequest(req, req.params.id);
+        res.json({ success: true, data: updated });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.post('/api/workflows/:id/test', requireAccess, async (req, res) => {
+    try {
+        const workflow = getWorkflowForRequest(req, req.params.id);
+        if (!workflow) {
+            return res.status(404).json({ success: false, error: 'Workflow not found' });
+        }
+
+        const endpoint = getEndpointForRequest(req, workflow.endpoint_id);
+        if (!endpoint) {
+            return res.status(404).json({ success: false, error: 'Endpoint not found' });
+        }
+
+        const latestRequest = stmts.getRequestsByEndpoint.all(endpoint.id, 1, 0)[0];
+        if (!latestRequest) {
+            return res.status(400).json({ success: false, error: 'Capture at least one request before testing this workflow' });
+        }
+
+        const matched = workflowMatchesRequest(workflow, latestRequest);
+        if (!matched) {
+            return res.status(400).json({ success: false, error: 'Latest request does not match this workflow yet' });
+        }
+
+        const results = await runWorkflow(workflow, endpoint, latestRequest, {
+            resolveIntegrationConfig(provider) {
+                return stmts.getIntegrationByEndpointAndProvider.get(endpoint.id, provider);
+            },
+        });
+        stmts.updateWorkflowRuntime.run(formatSqliteDate(new Date()), null, workflow.id);
+
+        const updated = getWorkflowForRequest(req, req.params.id);
+        res.json({ success: true, data: { workflow: updated, results } });
+    } catch (err) {
+        stmts.updateWorkflowRuntime.run(formatSqliteDate(new Date()), err.message, req.params.id);
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/workflows/:id', requireAccess, (req, res) => {
+    try {
+        const workflow = getWorkflowForRequest(req, req.params.id);
+        if (!workflow) {
+            return res.status(404).json({ success: false, error: 'Workflow not found' });
+        }
+
+        if (req.authEnabled) {
+            stmts.deleteWorkflowByOwner.run(req.params.id, req.user.id);
+        } else {
+            stmts.deleteWorkflow.run(req.params.id);
         }
 
         res.json({ success: true });
@@ -828,14 +1624,34 @@ app.post('/api/requests/:id/replay', requireAccess, async (req, res) => {
         }
 
         const headers = JSON.parse(request.headers);
-        delete headers.host;
-        delete headers['content-length'];
+        let response;
 
-        const response = await fetch(target_url, {
-            method: request.method,
-            headers,
-            body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-        });
+        if (isHttpRequestMethod(request.method)) {
+            delete headers.host;
+            delete headers['content-length'];
+
+            response = await fetch(target_url, {
+                method: request.method,
+                headers,
+                body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+            });
+        } else {
+            response = await fetch(target_url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-HookRadar-Source': request.method,
+                },
+                body: JSON.stringify({
+                    request: {
+                        ...request,
+                        headers,
+                        query_params: parseStoredJson(request.query_params, {}),
+                        body_json: parseStoredJson(request.body, null),
+                    },
+                }),
+            });
+        }
 
         const responseBody = await response.text();
 
@@ -913,31 +1729,21 @@ const webhookHandler = async (req, res) => {
         }
 
         const responseTime = Date.now() - startTime;
-        const requestId = uuidv4();
-        const headers = JSON.stringify(req.headers);
-        const queryParams = JSON.stringify(req.query);
         const contentType = req.headers['content-type'] || '';
         const ipAddress = req.ip || req.connection.remoteAddress || '';
         const userAgent = req.headers['user-agent'] || '';
-        const size = Buffer.byteLength(body, 'utf8');
-
-        stmts.createRequest.run(
-            requestId,
-            endpoint.id,
-            req.method,
-            subpath,
-            headers,
-            queryParams,
+        const savedRequest = persistCapturedRequest(endpoint, {
+            method: req.method,
+            path: subpath,
+            headers: req.headers,
+            query_params: req.query,
             body,
-            contentType,
-            ipAddress,
-            userAgent,
-            size,
-            endpoint.response_status,
-            responseTime,
-        );
-
-        const savedRequest = stmts.getRequest.get(requestId);
+            content_type: contentType,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            response_status: endpoint.response_status,
+            response_time: responseTime,
+        });
 
         broadcastToEndpoint(endpoint, {
             type: 'new_request',
@@ -945,37 +1751,7 @@ const webhookHandler = async (req, res) => {
             request: savedRequest,
         });
 
-        if (endpoint.forwarding_url) {
-            try {
-                const forwardHeaders = { ...req.headers };
-                delete forwardHeaders.host;
-                delete forwardHeaders['content-length'];
-
-                fetch(endpoint.forwarding_url, {
-                    method: req.method,
-                    headers: forwardHeaders,
-                    body: ['GET', 'HEAD'].includes(req.method) ? undefined : body,
-                }).then(fwdRes => {
-                    console.log(`📤 Forwarded ${req.method} to ${endpoint.forwarding_url} → ${fwdRes.status}`);
-                    broadcastToEndpoint(endpoint, {
-                        type: 'forward_result',
-                        request_id: requestId,
-                        status: fwdRes.status,
-                        url: endpoint.forwarding_url,
-                    });
-                }).catch(fwdErr => {
-                    console.error(`📤 Forward failed to ${endpoint.forwarding_url}:`, fwdErr.message);
-                    broadcastToEndpoint(endpoint, {
-                        type: 'forward_error',
-                        request_id: requestId,
-                        error: fwdErr.message,
-                        url: endpoint.forwarding_url,
-                    });
-                });
-            } catch (fwdErr) {
-                console.error('Forward setup error:', fwdErr.message);
-            }
-        }
+        triggerPostCaptureAutomation(endpoint, savedRequest);
 
         const responseHeaders = JSON.parse(endpoint.response_headers);
         Object.entries(responseHeaders).forEach(([key, value]) => {
@@ -992,6 +1768,44 @@ const webhookHandler = async (req, res) => {
 app.all('/hook/:slug', webhookHandler);
 app.all('/hook/:slug/*', webhookHandler);
 
+async function handleInboundEmailMessage({ parsed, session }) {
+    const recipientAddresses = (session?.envelope?.rcptTo || [])
+        .map((recipient) => recipient.address || '')
+        .filter(Boolean);
+    const inboxDomain = getInboundEmailStatus().domain;
+    const routedEndpointIds = new Set();
+    let deliveredCount = 0;
+
+    for (const recipientAddress of recipientAddresses) {
+        const [rawLocalPart, rawDomain] = recipientAddress.toLowerCase().split('@');
+        if (inboxDomain && rawDomain && rawDomain !== inboxDomain) {
+            continue;
+        }
+
+        const inbox = resolveEmailInboxByAddress(rawLocalPart);
+        if (!inbox?.is_enabled) {
+            continue;
+        }
+
+        const endpoint = stmts.getEndpoint.get(inbox.endpoint_id);
+        if (!endpoint || !endpoint.is_active || routedEndpointIds.has(endpoint.id)) {
+            continue;
+        }
+
+        captureEmailMessage(endpoint, inbox, {
+            parsed,
+            recipientAddress,
+            session,
+        });
+        routedEndpointIds.add(endpoint.id);
+        deliveredCount += 1;
+    }
+
+    if (deliveredCount === 0) {
+        throw new Error('No enabled email inbox matched this recipient');
+    }
+}
+
 // Serve static frontend in production
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, '..', 'dist');
@@ -1006,10 +1820,12 @@ if (fs.existsSync(distPath)) {
 
 server.on('close', () => {
     stopScheduler();
+    stopInboundEmailServer();
 });
 
 process.once('exit', () => {
     stopScheduler();
+    stopInboundEmailServer();
 });
 
 server.listen(PORT, () => {
@@ -1017,4 +1833,14 @@ server.listen(PORT, () => {
     console.log(`\n🚀 HookRadar Server running on http://localhost:${PORT}`);
     console.log(`📡 WebSocket available at ws://localhost:${PORT}/ws`);
     console.log(`🪝 Webhook endpoints at http://localhost:${PORT}/hook/<slug>\n`);
+
+    startInboundEmailServer({ onMessage: handleInboundEmailMessage })
+        .then((status) => {
+            if (status.enabled) {
+                console.log(`📮 Inbound email server listening on ${status.host}:${status.port} for *@${status.domain}`);
+            }
+        })
+        .catch((error) => {
+            console.error('📮 Inbound email server failed to start:', error.message);
+        });
 });

